@@ -83,7 +83,7 @@ Answer with exactly one word: YES if the change introduces a defect, otherwise N
 - **Scoring (validated in the pilot before it becomes primary).**
   - The score is the model's relative likelihood of the two answers at the answer position, $p=\frac{P_{YES}}{P_{YES}+P_{NO}}$, summing case and whitespace variants of each answer.
   - **Both candidates must be measured, not assumed.** A top-k list, even with k ≥ 5, does not guarantee that YES and NO both appear. Acceptable methods, in order of preference:
-    1. An open-weight model scored locally, reading both answer tokens' logits at the answer position (exact).
+    1. An open-weight model whose hosted endpoint returns both answer tokens' logits at the answer position (exact). Local hosting is possible only with approval ([../AGENTS.md](../AGENTS.md)).
     2. An API with a logit-bias option, applying the *same* bias to exactly the two answer tokens, so both appear in the returned list while their ratio is unchanged [I; must be verified per API].
     3. An API whose top-k list contains both candidates for at least 98% of pilot prompts.
   - The method is fixed per model in the pilot. A response without a valid two-candidate score is **invalid**; it is never recoded as YES or NO in the primary analysis (§11).
@@ -202,7 +202,7 @@ If C2 is not clearly more relevant than C3 on the validation split, apply the **
   5. A spread of capability.
   6. Terms of service that allow sending public Apache-2.0 code.
 - **Roster** [A; verify availability, cutoffs, and prices when the experiment starts]:
-  - **M1 (primary, confirmatory):** an instruction-tuned, non-reasoning model with exact two-candidate scoring (§4). An open-weight code model (for example Qwen-Coder-class) scored locally or via vLLM is preferred: scoring is exact, fixed weights make the run repeatable, and the model cannot be deprecated mid-study. A training cutoff before July 2025 is preferred, but it is not a contamination guarantee (L10). A pinned API model is the alternative if it passes the scoring check.
+  - **M1 (primary, confirmatory):** an instruction-tuned, non-reasoning model with exact two-candidate scoring (§4). An open-weight code model (for example Qwen-Coder-class) on a hosted endpoint with exact scoring is preferred: fixed weights make the run repeatable, and the model cannot be deprecated mid-study. Local hosting requires approval ([../AGENTS.md](../AGENTS.md)). A training cutoff before July 2025 is preferred, but it is not a contamination guarantee (L10). A pinned API model is the alternative if it passes the scoring check.
   - **M2 (independent second model, SA1):** a model from a different family with valid two-candidate scoring. If it is still offered, `gpt-4o-mini` is a candidate, because JIT-LSM and PROPER-SDP also used it [V]. Ollama is installed on this machine, but its log-probability support must be verified.
   - **M3 (optional):** a frontier model, binary output only, on a stratified subsample if the budget allows.
 - **Parameters:** temperature 0 (or the provider minimum), top-p 1, minimal `max_tokens` for label-only runs, and a fixed seed parameter if supported. Log the model ID, system fingerprint, request IDs, and timestamps.

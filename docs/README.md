@@ -139,6 +139,8 @@ Phase 2 critical review, 2026-10-19. Each row is a weakness, unsupported assumpt
 | F. Ranked research risks | [05-risks.md](05-risks.md) |
 | G. First milestone and decisions to finalize | [06-milestone-and-decisions.md](06-milestone-and-decisions.md) |
 | Bibliography with verification levels | [references.md](references.md) |
+| Discussion history, decision rationale, and handoff notes | [PROJECT_HISTORY.md](PROJECT_HISTORY.md) |
+| Working rules for every agent | [../AGENTS.md](../AGENTS.md) |
 | Reproduction scripts (prototypes only) | [../feasibility/](../feasibility/) |
 
 ## Evidence conventions
