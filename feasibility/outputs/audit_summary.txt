@@ -1,0 +1,34 @@
+﻿
+== Reconstruction (exists, first parent, Java-only numstat = la/ld)
+train: ok 16371/16374 (100.0%); missing 0; parent mismatch 0; numstat mismatch 3; merge commits 0
+valid: ok 5464/5465 (100.0%); missing 0; parent mismatch 0; numstat mismatch 1; merge commits 0
+test: ok 5479/5480 (100.0%); missing 0; parent mismatch 0; numstat mismatch 1; merge commits 0
+failures by project: {'giraph': 3, 'opennlp': 1, 'parquet-mr': 1}
+
+== Dates
+dataset author time equals Git author time: 27319/27319 (100.0%)
+valid commits older than their project's newest train commit by author time: 567/5465 (10.4%); projects affected 21
+test commits older than their project's newest train commit by author time: 159/5480 (2.9%); projects affected 11
+valid commits older than their project's newest train commit by committer time: 571/5465 (10.4%); projects affected 21
+test commits older than their project's newest train commit by committer time: 159/5480 (2.9%); projects affected 11
+train commits newer than their project's oldest test commit by committer time: 3326/16374 (20.3%)
+
+== Duplicate Java changes (git patch-id --stable)
+commits with a Java patch: 27317; commits sharing a patch-id with another commit: 312 in 148 groups
+groups by splits involved: {'train': 122, 'valid': 13, 'test': 9, 'train+valid': 3, 'test+valid': 1}
+commits without any Java change: 2
+
+== Size of the Java-only C0 diff (o200k tokens), label-blind
+train: median/p90/p95 [930, 6976, 12360]; <=8k 91.5%; <=12k 94.8%; <=16k 96.7%
+valid: median/p90/p95 [805, 5382, 10015]; <=8k 93.7%; <=12k 96.0%; <=16k 97.1%
+test: median/p90/p95 [881, 7353, 13700]; <=8k 90.9%; <=12k 94.3%; <=16k 95.7%
+class-specific (train and valid only):
+  train label=0.0: n 14984; <=8k 93.3%; <=12k 96.2%; <=16k 97.7%
+  train label=1.0: n 1390; <=8k 72.1%; <=12k 80.1%; <=16k 85.4%
+  valid label=0.0: n 4998; <=8k 95.3%; <=12k 97.2%; <=16k 98.1%
+  valid label=1.0: n 467; <=8k 76.2%; <=12k 83.1%; <=16k 86.9%
+
+== Same-file pool on validation commits (header stripped, diff lines masked)
+  all: n 5465; >=1k 81.2%; >=2k 69.4%; >=4k 52.4%; empty 5.1%
+  0.0: n 4998; >=1k 80.4%; >=2k 68.1%; >=4k 50.8%; empty 5.2%
+  1.0: n 467; >=1k 89.9%; >=2k 83.5%; >=4k 69.2%; empty 4.7%
