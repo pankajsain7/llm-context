@@ -103,49 +103,47 @@ def bm25_rank(query, docs, k1=1.2, b=0.75):
     return sorted(range(n), key=lambda i: (-scores[i], docs[i]["path"], docs[i]["start"])), scores
 
 
-def truncate(d, budget):
-    """Longest leading part of a snippet, cut at a line boundary, whose rendered text fits the budget."""
-    lines = d["body"].split("\n")
-    for k in range(len(lines) - 1, 0, -1):
-        body, end = "\n".join(lines[:k]), d["start"] + k - 1
-        text = f"// {d['path']} lines {d['start']}-{end}\n{body}"
-        if count_tokens(text) <= budget:
-            return {**d, "end": end, "body": body, "text": text}
-    return None
+def cut(d, k):
+    """The first k lines of a snippet, re-rendered."""
+    body, end = "\n".join(d["body"].split("\n")[:k]), d["start"] + k - 1
+    return {**d, "end": end, "body": body, "text": f"// {d['path']} lines {d['start']}-{end}\n{body}"}
+
+
+def render(snippets):
+    return "\n".join(d["text"] for d in snippets)
 
 
 def fill(order, docs, target, scores=None, tol=0.02):
-    """Take snippets in rank order, cutting a snippet that does not fit at a line boundary.
+    """Take snippets in rank order; budgets are counted on the rendered block, not per snippet.
 
-    Returns (snippets, tokens, status): "ok" (reached target * (1 - tol)), "line_limit" (stopped
-    earlier because the next line did not fit), "short" (pool exhausted) or "no_hits" (scores given
-    but none positive). Snippets with score <= 0 are never used.
+    A snippet that does not fit is cut at a line boundary; if not even its first line fits, it is
+    skipped and the next snippet is tried. Returns (snippets, rendered tokens, status): "ok" (reached
+    target * (1 - tol)), "line_limit" (below that, and at least one snippet could not be fitted),
+    "short" (eligible snippets exhausted) or "no_hits" (scores given but none positive).
     """
     if scores is not None:
         order = [i for i in order if scores[i] > 0]
         if not order:
             return [], 0, "no_hits"
-    picked, used, spans = [], 0, {}
+    picked, used, spans, skipped = [], 0, {}, 0
+    fits = lambda d: count_tokens(render(picked + [d])) <= target
     for i in order:
         d = docs[i]
         if any(not (d["end"] < s or d["start"] > e) for s, e in spans.get(d["path"], [])):
             continue  # no overlapping windows from the same file
-        t = count_tokens(d["text"])
-        if used + t > target:
-            d = truncate(d, target - used)
-            if d is None:
-                return picked, used, "ok" if used >= target * (1 - tol) else "line_limit"
-            t = count_tokens(d["text"])
+        if not fits(d):
+            n = d["end"] - d["start"] + 1
+            k = next((k for k in range(n - 1, 0, -1) if fits(cut(d, k))), 0) if fits(cut(d, 1)) else 0
+            if k == 0:
+                skipped += 1
+                continue
+            d = cut(d, k)
         picked.append(d)
-        used += t
+        used = count_tokens(render(picked))
         spans.setdefault(d["path"], []).append((d["start"], d["end"]))
         if used >= target * (1 - tol):
             return picked, used, "ok"
-    return picked, used, "short"
-
-
-def render(snippets):
-    return "\n".join(d["text"] for d in snippets)
+    return picked, used, "line_limit" if skipped else "short"
 
 
 def main(repo, sha, budget=2000, seed=0):
@@ -160,12 +158,10 @@ def main(repo, sha, budget=2000, seed=0):
     changed_lines = "\n".join(l[1:] for l in diff_u3.splitlines()
                               if l[:1] in "+-" and not l.startswith(("+++", "---")))
     order, scores = bm25_rank(changed_lines, docs)
-    c2, _, c2_status = fill(order, docs, budget, scores)
-    c2_tok = count_tokens(render(c2))
+    c2, c2_tok, c2_status = fill(order, docs, budget, scores)
     rnd = list(range(len(docs)))
     random.Random(f"{sha}:{seed}").shuffle(rnd)
-    c3, _, c3_status = fill(rnd, docs, c2_tok)
-    c3_tok = count_tokens(render(c3))
+    c3, c3_tok, c3_status = fill(rnd, docs, c2_tok)
 
     print(f"commit {sha}\nparent {parent}\nchanged files {changed}\ntokenizer {TOKENIZER}")
     print(f"C0 Java-only diff -U3 tokens: {count_tokens(diff_u3)}")

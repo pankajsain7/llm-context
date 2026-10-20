@@ -1,0 +1,26 @@
+[project]
+name = "jitctx"
+version = "0.1.0"
+description = "Context construction (C0-C3) for the thesis on repository context in LLM-based JIT defect prediction"
+requires-python = ">=3.12"
+dependencies = ["tiktoken", "tree-sitter", "tree-sitter-java", "pandas"]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-p no:cacheprovider"
+markers = ["integration: needs the JIT-Defect4J clones under THESIS_SCRATCH (default C:/Users/psain/thesis-scratch)"]
+
+[tool.ruff]
+line-length = 120
+src = ["src", "tests"]

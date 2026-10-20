@@ -1,0 +1,122 @@
+"""Command line: `python -m jitctx build-manifest | make-contexts | summarize`. No LLM is called anywhere."""
+import argparse
+import csv
+import json
+import random
+import subprocess
+import sys
+import tomllib
+from collections import Counter
+from dataclasses import fields
+from pathlib import Path
+
+from . import gitrepo
+from .conditions import Config, build_commit
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def load_config(path: Path | None, **overrides) -> Config:
+    values = tomllib.loads(path.read_text())["contexts"] if path else {}
+    values.update({k: v for k, v in overrides.items() if v is not None})
+    if "extra_budgets" in values:
+        values["extra_budgets"] = tuple(values["extra_budgets"])
+    unknown = set(values) - {f.name for f in fields(Config)}
+    if unknown:
+        raise SystemExit(f"unknown config keys: {sorted(unknown)}")
+    return Config(**values)
+
+
+def read_manifest(path: Path) -> list[dict]:
+    with open(path, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def cmd_build_manifest(a):
+    from .manifest import build  # the only code path that opens the benchmark files
+
+    manifest, labels = build(a.root, tuple(a.splits), a.cap, log=lambda s: print(s, file=sys.stderr))
+    manifest.to_csv(a.out, index=False)
+    print(f"manifest: {len(manifest)} commits -> {a.out}")
+    if a.labels_out:
+        labels.to_csv(a.labels_out, index=False)
+        print(f"labels (train/valid only): {len(labels)} -> {a.labels_out}")
+    for split, s in manifest.groupby("split"):
+        print(f"{split}: recon_ok {int(s.recon_ok.sum())}/{len(s)}, eligible {int(s.eligible.sum())}")
+
+
+def cmd_make_contexts(a):
+    cfg = load_config(a.config, budget=a.budget, seed=a.seed,
+                      extra_budgets=tuple(a.extra_budgets) if a.extra_budgets else None)
+    rows = [r for r in read_manifest(a.manifest) if r["split"] == a.split and r["eligible"] == "True"]
+    if a.split == "test" and not a.allow_test:
+        raise SystemExit("test-split contexts are locked until the protocol freeze (Gate 4)")
+    if a.commits:
+        wanted = set(a.commits)
+        rows = [r for r in rows if r["commit"] in wanted]
+    elif a.sample:
+        rows = random.Random(a.sample_seed).sample(sorted(rows, key=lambda r: r["commit"]), min(a.sample, len(rows)))
+    code_rev = gitrepo.head_revision(REPO_ROOT)
+    with open(a.out, "w", encoding="utf-8") as out:
+        for k, r in enumerate(rows, 1):
+            try:
+                records = build_commit(a.repos / r["project"], r["commit"], r["parent"], cfg, a.with_prompts)
+            except (subprocess.CalledProcessError, OSError, ValueError) as e:  # recorded, never silently skipped
+                records = [{"commit": r["commit"], "condition": "ALL", "status": "error",
+                            "error": f"{type(e).__name__}: {e}"[:300]}]
+            for rec in records:
+                rec.update(project=r["project"], split=r["split"], code_revision=code_rev)
+                out.write(json.dumps(rec) + "\n")
+            print(f"[{k}/{len(rows)}] {r['project']} {r['commit'][:10]}", file=sys.stderr)
+
+
+def cmd_summarize(a):
+    with open(a.jsonl, encoding="utf-8") as f:
+        recs = [json.loads(line) for line in f]
+    by_cond = {}
+    for r in recs:
+        by_cond.setdefault(r["condition"], []).append(r)
+    for cond, rs in sorted(by_cond.items()):
+        status = Counter(r["status"] for r in rs)
+        ctx = sorted(r.get("context_tokens", 0) for r in rs)
+        line = f"{cond}: n={len(rs)} status={dict(status)} context_tokens median={ctx[len(ctx) // 2]} max={ctx[-1]}"
+        errs = [abs(r["match_error"]) for r in rs if r.get("match_error") is not None]
+        if errs:
+            line += f" |match error| max={max(errs):.4f} >2%: {sum(e > 0.02 for e in errs)}"
+        print(line)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="jitctx")
+    sub = ap.add_subparsers(required=True)
+    p = sub.add_parser("build-manifest", help="label-free manifest with eligibility flags")
+    p.add_argument("--root", type=Path, required=True, help="scratch folder with jitfine/ and repos/")
+    p.add_argument("--splits", nargs="+", default=["train", "valid", "test"])
+    p.add_argument("--cap", type=int, default=16000)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--labels-out", type=Path, help="train/valid labels; never contains test labels")
+    p.set_defaults(func=cmd_build_manifest)
+    p = sub.add_parser("make-contexts", help="C0-C3 records for manifest commits (JSONL)")
+    p.add_argument("--manifest", type=Path, required=True)
+    p.add_argument("--repos", type=Path, required=True)
+    p.add_argument("--split", default="valid")
+    p.add_argument("--allow-test", action="store_true", help="only after the Gate 4 freeze")
+    p.add_argument("--commits", nargs="*")
+    p.add_argument("--sample", type=int)
+    p.add_argument("--sample-seed", type=int, default=0)
+    p.add_argument("--config", type=Path, default=REPO_ROOT / "configs" / "contexts.toml")
+    p.add_argument("--budget", type=int)
+    p.add_argument("--extra-budgets", type=int, nargs="*")
+    p.add_argument("--seed", type=int)
+    p.add_argument("--with-prompts", action="store_true")
+    p.add_argument("--out", type=Path, required=True)
+    p.set_defaults(func=cmd_make_contexts)
+    p = sub.add_parser("summarize", help="status and token summary of a make-contexts JSONL")
+    p.add_argument("jsonl", type=Path)
+    p.set_defaults(func=cmd_summarize)
+    a = ap.parse_args(argv)
+    a.func(a)
+
+
+if __name__ == "__main__":
+    main()

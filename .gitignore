@@ -1,2 +1,12 @@
 .env
 __pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+# Data, clones, manifests, labels, and run outputs live in C:\Users\psain\thesis-scratch, never in Git.
+*.pkl
+*.zip
+data/
+results/
+label_audit/

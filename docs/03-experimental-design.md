@@ -1,6 +1,6 @@
 # D. Experimental Design Proposal
 
-Status: **revision 3**, 2026-10-19, written after the Phase 2 critical review and the external audit. It supersedes revisions 1 and 2 (same date); every change and its reason is listed in the [revision log](README.md#revision-log). Nothing has been run on the test split and no LLM has been called. Parameters marked **(pilot)** may be adjusted only with validation-split data, never with test data. Evidence labels: **[V]** verified, **[I]** interpretation or recommendation, **[A]** assumption.
+Status: **revision 3.1**, 2026-10-19. Revision 3 was written after the Phase 2 critical review and the external audit; 3.1 follows the second external audit: hosted-API models only (user decision), the context rules as implemented in [../src/jitctx/](../src/jitctx/), the split-era confound (L15), and stricter eligibility (§8). Every change and its reason is listed in the [revision log](README.md#revision-log) and the [second audit response](README.md#second-external-audit-response). Nothing has been run on the test split and no LLM has been called. Parameters marked **(pilot)** may be adjusted only with validation-split data, never with test data. Evidence labels: **[V]** verified, **[I]** interpretation or recommendation, **[A]** assumption.
 
 ## 0. Design principles
 
@@ -8,7 +8,7 @@ Status: **revision 3**, 2026-10-19, written after the Phase 2 critical review an
 2. **Same commits, same model settings, same template** across conditions (a within-subject design).
 3. **Separate information from volume.** All context blocks share one token budget, and a token-matched random control is required (see [01-literature-review.md](01-literature-review.md) §7).
 4. **Plan for a null result.** Use equivalence tests so that "context does not help" can be a supported conclusion rather than a non-significant one.
-5. **Simplest operationalization first.** Git built-ins and BM25 first; tree-sitter or dependency analysis only if the pilot shows they are needed.
+5. **Simplest operationalization first.** Git plumbing, tree-sitter-java for method boundaries, and BM25; dependency analysis only if the pilot shows it is needed.
 6. **Context is fixed before the call.** One non-agentic prompt per condition, so the effect of *what* the model sees is not mixed up with *how* an agent searches. This is the main methodological difference from JIT-LSM (Huang2026), whose agent chooses its own same-file context ([01-literature-review.md](01-literature-review.md) §5).
 
 ## 1. Critique of the provisional research questions
@@ -83,7 +83,7 @@ Answer with exactly one word: YES if the change introduces a defect, otherwise N
 - **Scoring (validated in the pilot before it becomes primary).**
   - The score is the model's relative likelihood of the two answers at the answer position, $p=\frac{P_{YES}}{P_{YES}+P_{NO}}$, summing case and whitespace variants of each answer.
   - **Both candidates must be measured, not assumed.** A top-k list, even with k ≥ 5, does not guarantee that YES and NO both appear. Acceptable methods, in order of preference:
-    1. An open-weight model whose hosted endpoint returns both answer tokens' logits at the answer position (exact). Local hosting is possible only with approval ([../AGENTS.md](../AGENTS.md)).
+    1. A hosted API that returns the log-probabilities of both answer tokens at the answer position (exact). Inference uses hosted cloud APIs only; local model hosting is ruled out (user decision, 2026-10-19).
     2. An API with a logit-bias option, applying the *same* bias to exactly the two answer tokens, so both appear in the returned list while their ratio is unchanged [I; must be verified per API].
     3. An API whose top-k list contains both candidates for at least 98% of pilot prompts.
   - The method is fixed per model in the pilot. A response without a valid two-candidate score is **invalid**; it is never recoded as YES or NO in the primary analysis (§11).
@@ -114,22 +114,25 @@ Every condition contains the identical C0 diff, `git diff -U3 -M <parent> <commi
 
 - **Snapshot.** All code is read from `<parent>` via `git ls-tree -r` and `git cat-file --batch`; no checkout.
 - **Preprocessing.** Strip each file's leading license or comment header (everything before `package`) and normalise line endings.
-- **Filling and token accounting.** Budgets and matches are counted on the *rendered* block (snippet headers, markers, and code), with o200k_base as the reference tokenizer so that every model receives identical text. Provider-reported tokens are logged separately for cost. Units (lines for C1, windows for C2 and C3) are added in rank order, and the first unit that does not fit is cut at a line boundary. Each block gets a status:
-  - `ok`: within 2% of the target;
-  - `line_limit`: the next line did not fit (the deviation is recorded);
-  - `short`: the pool is exhausted;
-  - `no_hits`: C2 only, no window scored above 0.
+- **Filling and token accounting** (implemented in [../src/jitctx/select.py](../src/jitctx/select.py) and [../src/jitctx/local.py](../src/jitctx/local.py)). Budgets and matches are counted on the *rendered* block (snippet headers, markers, and code), never as a sum of separately counted snippets, with o200k_base as the reference tokenizer so that every model receives identical text. Provider-reported tokens are logged separately for cost. Units (lines for C1, windows for C2 and C3) are added in rank order. A unit that does not fit is cut at a line boundary; if not even its first line fits, it is **skipped and the next unit is tried** (the second audit showed that stopping there left C2 empty when one huge line ranked first). Each block gets a status:
+  - `ok`: within 2% below the target;
+  - `line_limit`: below that, and at least one unit could not be fitted (the count of skipped units is logged);
+  - `short`: the eligible units ran out without any size failure;
+  - `no_hits`: C2 only, no window scored above 0 (C3 is then empty too);
+  - `empty_pool`: nothing to select from.
 
-  The prototype implements and tests this rule ([feasibility/test_context_demo.py](../feasibility/test_context_demo.py)).
-- **Rendering.** Snippets are grouped by file, each prefixed with `// <path> lines a-b`, in line order within a file. Files are ordered by ascending best rank, so the top-ranked snippet ends up next to the diff. Gaps inside a file are shown as `// ...`.
+  Tests: [../tests/](../tests/), including the audit's reproduction case.
+- **Rendering.** Each C2/C3 snippet is `// <path> lines a-b` followed by the code. Snippets are grouped by file, in line order within a file, and files are ordered so that the file with the best-ranked snippet comes last, next to the diff. C1 lists the changed files in diff order; each run of selected lines has the same header, and each masked run that borders a selected line becomes one marker line, `// <path> lines a-b: shown in the diff`.
 - **Empty pools.** If a pool is empty, the block is "(none)" and the instance is flagged, so its prompt equals C0's. This applies to C1 when the changed files are new or already shown in full by the diff (3.5% of random and 5.0% of defective validation commits [V]), and to C2/C3 when every BM25 score is 0.
 
 ### 5.2 C1: same-file local context
 
-1. **Masking prevents duplication.** Collect the parent-side line numbers of every hunk in the C0 diff, including the three context lines. These lines are never repeated: each contiguous run becomes one marker line, `// [lines a-b: shown in the diff]`.
-2. **Enclosing lines** are the lines of the innermost method, constructor, or initializer declaration that contains a masked line, found with tree-sitter-java (pinned grammar version). For changes outside any method, the enclosing class header and field declarations come first instead. Git's `--function-context` ranges serve as an independent cross-check **(pilot: manually inspect 30+ diverse changes)**. The Phase 2 sizes below were measured with Git's ranges.
+1. **Masking prevents duplication.** Collect the parent-side line numbers of every hunk in the C0 diff, including the three context lines. These lines are never repeated (marker lines, §5.1).
+2. **Enclosing lines** are the lines of the innermost method, constructor, compact constructor, or static or instance initializer that contains a *changed* parent line, found with tree-sitter-java (pinned in [../requirements.txt](../requirements.txt)). Changed parent lines are the deleted lines and, for a pure insertion, the parent lines directly before and after it; context lines do not count, so a neighbouring method is not pulled in just because the diff shows its last lines. For changes outside any method, the enclosing type's header and field declarations come first instead. Git's `--function-context` ranges serve as an independent cross-check **(pilot: manually inspect 30+ diverse changes)**. The Phase 2 sizes below were measured with Git's ranges.
 3. **Ranking of the remaining lines:** enclosing lines before all others; then smaller distance to the nearest masked line; then the file order of the diff; then line number.
 4. **Fill** to B line by line (§5.1).
+
+Implementation note: Git line numbering splits on LF only, so the builder does too (Python's `splitlines()` also splits on form feeds, which old Apache sources contain, and would shift line numbers).
 
 Examples [V]: for `76c125c3` the masked same-file pool has 5,499 tokens, 3,657 of them inside enclosing methods. For `4063338a` the figures are 2,776 and 268. The measurement code is [feasibility/measure_inputs.py](../feasibility/measure_inputs.py).
 
@@ -138,7 +141,7 @@ Examples [V]: for `76c125c3` the masked same-file pool has 5,499 tokens, 3,657 o
 - **Pool:** all `.java` blobs in the parent tree, excluding every path touched by the commit (old and new names). Test files are included.
 
   [V] Changed files must be excluded: when the changed file was in the pool, BM25 ranked three same-file windows first, which collapses C2 into local context ([04-feasibility-demo.md](04-feasibility-demo.md) §2).
-- **Chunks:** 40-line windows with a 20-line stride, plus a final window that ends at the file's last line, so every line is covered [V, tested for files of 0–120 lines] **(pilot: compare with method-level chunks)**.
+- **Chunks:** windows of at most 40 lines *and* at most 500 code tokens (line token sums). Consecutive windows start at most 20 lines apart and overlap by half their length, and the last window ends at the file's last line, so every line is covered [V, tested for files of 0–120 lines and with long lines]. A single line longer than 500 tokens forms its own window, flagged `oversized`; it is selected only if it fits **(pilot: compare with method-level chunks)**.
 
 ### 5.4 C2: BM25
 
@@ -161,7 +164,7 @@ Overlap with C2 is allowed and is reported. Seed 0 is used for all models; seeds
 
 - **C1 and C2 differ in pool and in ranking.** C2−C1 therefore compares two practical *strategies* at the same budget, not a pure source effect. A pure source contrast would need a same-file BM25 condition, which is left out to save cost.
 - **Local context can run out.** When the masked same-file pool is smaller than B (about 27% of sampled commits at B = 2,000 [V, validation]), C1 has fewer tokens than C2. H1c is therefore tested on the commits whose pool can fill B, a label-blind criterion; the all-commit version is sensitivity analysis S9.
-- **Line-based windows do not bound tokens.** In commons-codec, 40-line windows range from a median of 385 to a maximum of 18,761 tokens, because some tests hold long data literals. For `76c125c3`, the top BM25 window held 5,813 tokens, so C2 at B = 2,000 became a single truncated window of Base64 test data [V, [04-feasibility-demo.md](04-feasibility-demo.md) §2]. Gate 2 must bound windows by tokens as well as lines (for example at most 500 tokens, splitting longer windows) and report how often this happens.
+- **Line-based windows do not bound tokens.** In commons-codec, 40-line windows range from a median of 385 to a maximum of 18,761 tokens, because some tests hold long data literals. For `76c125c3`, the top BM25 window held 5,813 tokens, so C2 at B = 2,000 became a single truncated window of Base64 test data [V, [04-feasibility-demo.md](04-feasibility-demo.md) §2]. The builder therefore bounds windows at 500 tokens as well (§5.3); how often oversized single lines occur is logged per commit.
 - **C3 is the volume control for C2.** For C1 it is only an approximate volume control, because its code comes from other files.
 - **Window boundaries.** 40-line windows cut through methods, equally in C2 and C3.
 - **Git's Java function-context heuristic** must be validated (§5.2).
@@ -187,10 +190,12 @@ If C2 is not clearly more relevant than C3 on the validation split, apply the **
 | L8 | Duplicate and cherry-picked changes | `git patch-id --stable`; keep one instance per patch ID |
 | L9 | Matched random control | Per-instance token match, same pool, recorded seeds |
 | L10 | Contamination (reduced, not excluded) | Exposure cannot be ruled out: the commits and their later fixes have been public since 2001–2019, the benchmark labels since August 2022 (JIT-Fine `data.zip` [V]), and labels with code as plain JSON since July 2025 (JIT-Defect-Extended [V]). Controls: no messages or issue keys in prompts; record each model's training cutoff (an earlier cutoff only avoids the most accessible plain-text copy); a label-recall probe as a *screening* check, whose negative result does not prove absence; flags for rationales that mention an issue key (`[A-Z]+-\d+`) or a later fix; results by commit year; claims limited to "performance on public historical commits". Within-model contrasts are less exposed than absolute performance, because every condition contains the same diff |
-| L11 | Project and time effects on baselines | Train baselines on the train split only. Report results per project |
+| L11 | Project and time effects on baselines | Train baselines on the train split only. Report results per project. Because the split is class-stratified (L15), also report B1–B3 in a strictly chronological re-split of train plus validation (test untouched), where time-dependent features lose much of their apparent value (Kamei LR AUC 0.792 → 0.768 on validation [V]) |
 | L12 | Failure accounting | Reason codes for unresolvable commits, API errors, retries, invalid outputs, and empty pools. Analyse the intention-to-treat population plus sensitivity analyses |
 | L13 | Time drift not confounded with condition | Randomise the request order across conditions and instances within each model run, and finish each model's run within a short window |
 | L14 | Input scope matches the benchmark's change definition | Diffs and context use Java files except `package-info.java`, the scope of the benchmark's `la/ld` [V]. Whether the labels ignore other files is not verified, so the scope is a documented task definition |
+| L15 | Split-era confound (*new, second audit*) | The released split is class-stratified, so defective evaluation commits are disproportionately older than clean ones: on validation, commit age alone predicts the label with within-project AUC 0.844 [V, [02-datasets.md](02-datasets.md) §2 item 10]. Controls: no dates in prompts (already); report every contrast also *within era strata* (project × period, S11); in the pilot, regress the LLM score on label and commit age to measure era sensitivity per condition; interpret C1−C0 and C2−C0 with this caveat, C2−C3 being protected by design. Whether to draw clean comparison commits time-matched instead is decision D28 |
+| L16 | Test-split exposure (*new*) | The test records and statistics already seen are listed in [02-datasets.md](02-datasets.md) §8. None may inform a design choice; the displayed test records are excluded from the confirmatory sample if D27 is approved |
 
 ## 7. Models
 
@@ -202,8 +207,8 @@ If C2 is not clearly more relevant than C3 on the validation split, apply the **
   5. A spread of capability.
   6. Terms of service that allow sending public Apache-2.0 code.
 - **Roster** [A; verify availability, cutoffs, and prices when the experiment starts]:
-  - **M1 (primary, confirmatory):** an instruction-tuned, non-reasoning model with exact two-candidate scoring (§4). An open-weight code model (for example Qwen-Coder-class) on a hosted endpoint with exact scoring is preferred: fixed weights make the run repeatable, and the model cannot be deprecated mid-study. Local hosting requires approval ([../AGENTS.md](../AGENTS.md)). A training cutoff before July 2025 is preferred, but it is not a contamination guarantee (L10). A pinned API model is the alternative if it passes the scoring check.
-  - **M2 (independent second model, SA1):** a model from a different family with valid two-candidate scoring. If it is still offered, `gpt-4o-mini` is a candidate, because JIT-LSM and PROPER-SDP also used it [V]. Ollama is installed on this machine, but its log-probability support must be verified.
+  - **M1 (primary, confirmatory):** an instruction-tuned, non-reasoning model **served through a hosted cloud API** with exact two-candidate scoring (§4), pinned to a dated version. No local model hosting (user decision, 2026-10-19). A hosted open-weight model is acceptable if its API exposes the needed log-probabilities. A training cutoff before July 2025 is preferred, but it is not a contamination guarantee (L10). If no candidate passes the scoring check, the pre-specified MCC fallback applies; local hosting is not a fallback.
+  - **M2 (independent second model, SA1):** a hosted model from a different family or provider with valid two-candidate scoring. If it is still offered, `gpt-4o-mini` is a candidate, because JIT-LSM and PROPER-SDP also used it [V].
   - **M3 (optional):** a frontier model, binary output only, on a stratified subsample if the budget allows.
 - **Parameters:** temperature 0 (or the provider minimum), top-p 1, minimal `max_tokens` for label-only runs, and a fixed seed parameter if supported. Log the model ID, system fingerprint, request IDs, and timestamps.
 
@@ -214,7 +219,10 @@ If C2 is not clearly more relevant than C3 on the validation split, apply the **
   1. Reconstruction passes: SHA and parent exist, and numstat over Java files except `package-info.java` equals `la/ld` (99.98% of commits [V]).
   2. At least one in-scope Java change (2 of 27,319 commits have none [V]).
   3. $T(C0)\le 16{,}000$ tokens (o200k_base) **(decision D4)**.
-  4. The patch ID is unique within the sample.
+  4. The patch ID is unique within the split (the earliest commit of a group is kept), and a test commit whose patch also occurs in train or validation is excluded (1 group [V]).
+  5. *(Proposed, D27)* The test records displayed during feasibility work ([02-datasets.md](02-datasets.md) §8) are excluded from the confirmatory sample by a documented rule.
+
+  The label-free manifest with these flags is built by `python -m jitctx build-manifest` ([../src/jitctx/manifest.py](../src/jitctx/manifest.py)).
 
   Evidence [V, all 21 projects; [02-datasets.md](02-datasets.md) §2]: the cap keeps 95.7% of test commits (label-blind). By class, measured on train and validation only, it keeps 85–87% of defective and about 98% of clean commits; 12,000 tokens would keep 80–83% of defective commits and 8,000 only 72–76%. 16,000 is the largest cap that keeps every prompt (diff, 8,000-token RQ3 context, instructions) within a 32K-token window. Expected yield [I]: about 400 eligible defective test commits, if the train and validation retention transfers to the test split.
 - **Inference target:** eligible Java changes of the JIT-Defect4J test split, with the benchmark label as an observed, SZZ-derived proxy. Excluded large commits (about 14% of defective ones) are reported in a CONSORT-style flow diagram, by label, and are a stated limitation (Risk 9).
@@ -283,10 +291,11 @@ Exploratory: a logistic regression of the label on the LLM score plus log churn,
    - S4: leave one project out.
    - S5: treat invalid outputs as defective vs clean.
    - S6: C3 seeds 1–2.
-   - S7: stratify by commit year (contamination).
+   - S7: stratify by commit year (contamination). Confounded with the label by the split construction (L15); interpret only within era strata.
    - S8: a high-confidence subset after a manual audit of defective labels (if time allows).
    - S9: C2−C1 on all eligible commits, including those whose C1 block is shorter than B.
    - S10: models with training cutoffs before vs after July 2025 (descriptive).
+   - S11: every confirmatory contrast within project × period strata, and with commit age as a covariate (L15).
 9. **Exploratory EQ1:** interaction of condition with moderators, labelled as exploratory and not multiplicity-corrected.
 
 ## 12. Cost model (RQ3; illustrative)
@@ -308,7 +317,7 @@ M1 needs about **69M** input tokens and M2 about **21M**. Output for label-only 
 | 2.00 | ≈ $137 | ≈ $41 |
 | 10.00 | ≈ $686 | ≈ $206 |
 
-These are **not price quotes**; freeze the real price list on the run date and reconcile it with the provider's usage records after the pilot. A self-hosted M1 costs GPU hours instead [A]. M3 on 600 commits adds about 10M input tokens plus any reasoning output.
+These are **not price quotes**; freeze the real price list on the run date and reconcile it with the provider's usage records after the pilot. M3 on 600 commits adds about 10M input tokens plus any reasoning output.
 
 ## 13. Reproducibility
 

@@ -3,6 +3,8 @@
 Expected layout under --root (see docs/04-feasibility-demo.md for download commands):
   apachejit/apachejit_total.csv          from github.com/hosseinkshvrz/apachejit (dataset/)
   jitfine/data/data/jitfine/*.pkl        from github.com/jacknichao/JIT-Fine (data.zip)
+Test labels are blanked unless --allow-test-labels is given. That flag only reproduces test-label figures
+already disclosed in docs/02-datasets.md §8; never use it to inform a design choice.
 """
 import argparse
 import pickle
@@ -15,12 +17,16 @@ warnings.filterwarnings("ignore")  # old pickles trigger numpy deprecation warni
 pd.set_option("display.width", 200)
 
 
-def load_jit_defect4j(root):
+def load_jit_defect4j(root, allow_test_labels=False):
     base = root / "jitfine" / "data" / "data" / "jitfine"
     frames = []
     for split in ("train", "valid", "test"):
         with open(base / f"features_{split}.pkl", "rb") as f:
             df = pickle.load(f).assign(split=split)
+        if split == "test" and not allow_test_labels:
+            df["is_buggy_commit"] = float("nan")
+            frames.append(df)
+            continue
         with open(base / f"changes_{split}.pkl", "rb") as f:
             ids, labels, _msgs, _codes = pickle.load(f)
         agree = (df.commit_hash.map(dict(zip(ids, labels))) == df.is_buggy_commit).mean()
@@ -49,11 +55,15 @@ def report_jit_defect4j(d):
           f"of {int((d.split == 'test').sum())}")
     t = d[d.split == "test"]
     print("test churn quantiles:", t.churn.quantile([.5, .75, .9, .95, .99]).round(0).to_dict())
-    for cap in (200, 400, 600):
-        k = t[t.churn <= cap]
-        print(f"test churn<={cap}: keeps {len(k) / len(t):.1%} of commits, "
-              f"{int(k.is_buggy_commit.sum())}/{int(t.is_buggy_commit.sum())} defective")
+    if t.is_buggy_commit.isna().all():
+        print("test labels blanked: test-label figures and the churn-quintile rates below exclude the test split")
+    else:
+        for cap in (200, 400, 600):
+            k = t[t.churn <= cap]
+            print(f"test churn<={cap}: keeps {len(k) / len(t):.1%} of commits, "
+                  f"{int(k.is_buggy_commit.sum())}/{int(t.is_buggy_commit.sum())} defective")
     print("defect rate by churn quintile:")
+    d = d.dropna(subset=["is_buggy_commit"])
     print(d.groupby(pd.qcut(d.churn, 5, duplicates="drop"))["is_buggy_commit"].mean().round(3).to_string())
 
 
@@ -72,6 +82,7 @@ def report_apachejit(root):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, default=Path("."))
-    root = ap.parse_args().root
-    report_jit_defect4j(load_jit_defect4j(root))
-    report_apachejit(root)
+    ap.add_argument("--allow-test-labels", action="store_true")
+    args = ap.parse_args()
+    report_jit_defect4j(load_jit_defect4j(args.root, args.allow_test_labels))
+    report_apachejit(args.root)

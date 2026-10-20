@@ -1,10 +1,10 @@
 # E. Feasibility Demonstration (real data)
 
-Status: executed 2026-10-19; §5 added in the Phase 2 review; **updated after the external audit** (prototype defects fixed and tested, demo re-run, all-project audit in §5.6, label-free outputs in [feasibility/outputs/](../feasibility/outputs/)). **Every example below is a real dataset record and real Git output. Nothing is synthetic.** Commands that look at *later* history (marked "analysis only") were used to judge label quality. Such information must never enter prompts.
+Status: executed 2026-10-19; §5 added in the Phase 2 review; updated after the external audit (prototype defects fixed and tested, demo re-run, all-project audit in §5.6, label-free outputs in [feasibility/outputs/](../feasibility/outputs/)) and after the **second external audit** (two more prototype defects fixed, §5.6; the experiment's context builder now lives in [../src/jitctx/](../src/jitctx/), §7). **Every example below is a real dataset record and real Git output. Nothing is synthetic.** Commands that look at *later* history (marked "analysis only") were used to judge label quality. Such information must never enter prompts. Examples 1 and 2 are **test-split records**; they were displayed before the test split was locked and are listed in [02-datasets.md](02-datasets.md) §8.
 
 ## 1. Environment and reproduction
 
-- Windows, PowerShell 5.1, Git 2.55.0.windows.5 (not on PATH; called from `C:\Program Files\Git\cmd`), Python 3.12.2. Exact package versions: [feasibility/requirements.txt](../feasibility/requirements.txt).
+- Windows, PowerShell 5.1, Git 2.55.0.windows.5 (not on PATH; called from `C:\Program Files\Git\cmd`), Python 3.12.2. Exact package versions: [requirements.txt](../requirements.txt).
 - Data and clones live in `C:\Users\psain\thesis-scratch`, **outside OneDrive**. Repositories and datasets should not be synced. The HEAD of every clone used is listed in [feasibility/outputs/repository_heads.txt](../feasibility/outputs/repository_heads.txt).
 - SHA-256 of the inputs, so that others can check they use the same files:
 
@@ -20,7 +20,7 @@ $env:Path = "C:\Program Files\Git\cmd;" + $env:Path
 New-Item -ItemType Directory -Force C:\Users\psain\thesis-scratch | Out-Null
 Set-Location C:\Users\psain\thesis-scratch
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r "$env:USERPROFILE\OneDrive - mhp-group.com\Desktop\LLM-Context\feasibility\requirements.txt"
+.\.venv\Scripts\python.exe -m pip install -r "$env:USERPROFILE\OneDrive - mhp-group.com\Desktop\LLM-Context\requirements.txt"
 New-Item -ItemType Directory -Force apachejit, jitfine, repos | Out-Null
 Invoke-WebRequest https://raw.githubusercontent.com/hosseinkshvrz/apachejit/master/dataset/apachejit_total.csv -OutFile apachejit\apachejit_total.csv
 Invoke-WebRequest https://github.com/jacknichao/JIT-Fine/raw/master/data.zip -OutFile jitfine\data.zip
@@ -48,9 +48,16 @@ New-Item -ItemType Directory -Force jitext | Out-Null
 foreach ($f in "balanced_dataset_1000.json", "unbalanced_dataset_1730.json") {
   Invoke-WebRequest "https://media.githubusercontent.com/media/JIT-LSM/JIT_LSM/main/LargeModel/data/$f" -OutFile "jitext\$f"
 }
+
+# After the second external audit: label-quality evidence (validation only; uses later history), manifest, builder tests
+.\.venv\Scripts\python.exe "$fs\label_audit.py" --root . --n 30 --seed 2026 --jira
+$repo = "$env:USERPROFILE\OneDrive - mhp-group.com\Desktop\LLM-Context"
+$env:PYTHONPATH = "$repo\src"
+.\.venv\Scripts\python.exe -m jitctx build-manifest --root . --out manifest.csv --labels-out labels_trainvalid.csv
+.\.venv\Scripts\python.exe -m pytest "$repo\tests" -q   # integration tests read manifest.csv and repos\
 ```
 
-The scripts are [feasibility/verify_datasets.py](../feasibility/verify_datasets.py) (dataset statistics), [feasibility/context_demo.py](../feasibility/context_demo.py) (a prototype of the C0 diff and the C2/C3 blocks, not the experiment pipeline), [feasibility/measure_inputs.py](../feasibility/measure_inputs.py) (Phase 2 sample measurements), [feasibility/audit_dataset.py](../feasibility/audit_dataset.py) (the all-project audit), and [feasibility/test_context_demo.py](../feasibility/test_context_demo.py) (129 tests). The `--defective-only` run reads validation labels; both measurement scripts refuse to read test labels.
+The scripts are [feasibility/verify_datasets.py](../feasibility/verify_datasets.py) (dataset statistics; its test-label figures are only printed with `--allow-test-labels`, which reproduces already-disclosed numbers), [feasibility/context_demo.py](../feasibility/context_demo.py) (a prototype of the C0 diff and the C2/C3 blocks, superseded by [../src/jitctx/](../src/jitctx/)), [feasibility/measure_inputs.py](../feasibility/measure_inputs.py) (Phase 2 sample measurements), [feasibility/audit_dataset.py](../feasibility/audit_dataset.py) (the all-project audit), [feasibility/label_audit.py](../feasibility/label_audit.py) (label-quality evidence for validation commits), and [feasibility/test_context_demo.py](../feasibility/test_context_demo.py) (131 tests). The `--defective-only` run reads validation labels; `measure_inputs.py` refuses test labels, and `audit_dataset.py` loads the test pickle but uses only its label-free columns.
 
 ## 2. Example 1: a defective-labelled JIT-Defect4J commit
 
@@ -216,7 +223,7 @@ Both files from `JIT_LSM/LargeModel/data/` were downloaded and joined with JIT-D
 
 ### 5.6 All-project audit (after the external review)
 
-[feasibility/audit_dataset.py](../feasibility/audit_dataset.py) checked all 27,319 commits against the 21 repositories in about six minutes. It never loads test labels; class-specific figures use train and validation only. Outputs: [feasibility/outputs/audit_summary.txt](../feasibility/outputs/audit_summary.txt) and the label-free per-commit file [feasibility/outputs/audit_commits.csv](../feasibility/outputs/audit_commits.csv).
+[feasibility/audit_dataset.py](../feasibility/audit_dataset.py) checked all 27,319 commits against the 21 repositories in about six minutes. It loads the test pickle for label-free columns only and never uses or reports test labels; class-specific figures use train and validation only. Outputs: [feasibility/outputs/audit_summary.txt](../feasibility/outputs/audit_summary.txt) and the label-free per-commit file [feasibility/outputs/audit_commits.csv](../feasibility/outputs/audit_commits.csv).
 
 | Check | Train | Validation | Test |
 |---|---|---|---|
@@ -232,7 +239,7 @@ Both files from `JIT_LSM/LargeModel/data/` were downloaded and joined with JIT-D
 - **Same-file pool** (validation, license header stripped, diff lines masked): at least 1,000 / 2,000 / 4,000 tokens for 81.2% / 69.4% / 52.4% of commits (defective 89.9% / 83.5% / 69.2%; clean 80.4% / 68.1% / 50.8%); empty for 5.1%.
 - **Mean diff size under a 16,000-token cap** (train and validation): 1,777 tokens for clean and 3,860 for defective commits.
 
-**Prototype defects reported by the audit, reproduced and fixed** ([feasibility/test_context_demo.py](../feasibility/test_context_demo.py), 129 tests pass):
+**Prototype defects reported by the audits, reproduced and fixed** ([feasibility/test_context_demo.py](../feasibility/test_context_demo.py), 131 tests pass):
 
 | Defect | Reproduction | Fix |
 |---|---|---|
@@ -241,6 +248,8 @@ Both files from `JIT_LSM/LargeModel/data/` were downloaded and joined with JIT-D
 | Token matching not enforced | C3 reached 95.5% of C2 in the old demo | Line-boundary cut of the next unit, statuses, tests at 500–4,000 tokens |
 | Path headers were indexed | File names acted as query matches | BM25 indexes code lines only |
 | License headers were not stripped | Boilerplate windows in the pool | Stripped before `package`, original line numbers kept |
+| *(second audit)* `fill()` stopped at the first window that could not be cut to fit | A 4,505-token one-line window ranked first, a 7-token window second, budget 1,000: nothing selected, status `line_limit` | The window is skipped and the next one tried; `line_limit` now means "below target with at least one unfittable window" |
+| *(second audit)* Budgets counted per snippet, but the prompt holds the joined text | Separate counts can differ from the count of the joined block | `used` is the token count of the rendered block; tests assert equality |
 
 ## 6. What this demonstrates, and what it does not
 

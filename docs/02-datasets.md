@@ -1,6 +1,6 @@
 # B. Dataset Comparison and C. Recommendation
 
-Status: research phase, 2026-10-19; revised after the Phase 2 critical review and **after the external audit** (all-project audit of all 27,319 commits; split explanation corrected; dataset decision now *conditionally accepted* pending Gate 1). Evidence labels: **[V]** verified from real files or Git in this review, **[P]** taken from the paper (full text read), **[A]** taken from an abstract or dataset record only, **[NV]** not verified. Numbers can be reproduced with [feasibility/verify_datasets.py](../feasibility/verify_datasets.py), [feasibility/measure_inputs.py](../feasibility/measure_inputs.py), and [feasibility/audit_dataset.py](../feasibility/audit_dataset.py); label-free outputs are in [feasibility/outputs/](../feasibility/outputs/); the setup is described in [04-feasibility-demo.md](04-feasibility-demo.md).
+Status: research phase, 2026-10-19; revised after the Phase 2 critical review, the external audit, and **the second external audit** (JIT-Fine paper read in full; split protocol reconstructed; test-split exposure recorded in §8). Evidence labels: **[V]** verified from real files or Git in this review, **[P]** taken from the paper (full text read), **[A]** taken from an abstract or dataset record only, **[I]** interpretation, **[NV]** not verified. Numbers can be reproduced with [feasibility/verify_datasets.py](../feasibility/verify_datasets.py), [feasibility/measure_inputs.py](../feasibility/measure_inputs.py), and [feasibility/audit_dataset.py](../feasibility/audit_dataset.py); label-free outputs are in [feasibility/outputs/](../feasibility/outputs/); the setup is described in [04-feasibility-demo.md](04-feasibility-demo.md).
 
 ## 1. Summary comparison
 
@@ -13,7 +13,7 @@ Status: research phase, 2026-10-19; revised after the Phase 2 critical review an
 | Commit ID / parent / repo | hash + **parent hash** + project [V] | hash (file name), GitHub URL, all JIT-Defect4J fields [V] | hash + project; no parent [V] | Not inspected [NV] | `repo_links.yaml` [A] |
 | Git reconstruction | **Verified for all 27,319 commits**: all exist with the recorded parent; churn reproduced for 99.98% with Java files except `package-info.java` [V] | Not needed for changed files (pre-extracted whole-file diff view); still needed for cross-file context [V] | **Verified** on 2 ZooKeeper commits [V]; Hadoop mapping caveat [V] | Not attempted [NV] | Not attempted [NV] |
 | Repository size, for context retrieval | Small (commons-codec pack 8.4 MiB; about 100 Java files per snapshot) [V] | Same repositories | Medium to large (Hadoop, Camel, Flink, Ignite, Spark) [P] | Very large (Linux, Chromium) [P] | Mixed [NV] |
-| Provided split | Per project ≈60/20/20, roughly chronological per project (2.9% of test commits are older than the project's last train commit) [V] | None in the layout; recoverable by joining with JIT-Defect4J [V] | Time-based: balanced train 2003–2016, test 2017–2019 [V/P] | Per-repository chronological 80/10/10 [P] | [NV] |
+| Provided split | Per project ≈60/20/20, time-ordered and then **class-stratified**: 94.8% of commits sit where a strict time split puts them; the rest were swapped to equalise defect rates (§2, item 10) [V/P] | None in the layout; recoverable by joining with JIT-Defect4J [V] | Time-based: balanced train 2003–2016, test 2017–2019 [V/P] | Per-repository chronological 80/10/10 [P] | [NV] |
 | License and access | **No LICENSE file** in the GitHub repo; `data.zip` is 75 MB [V] | **No LICENSE file**; ≈288 MB Git pack, ≈1.94 GB of JSON [V] | CC BY 4.0; CSV 16.5 MB [V] | Anonymous figshare link; page needs JavaScript; schema not inspected [NV] | CC BY 4.0; 2.2 GB zip [A] |
 | Fit for this thesis | **Best overall fit** | Cross-checks and comparability with JIT-LSM only | **Fallback** | Robustness only, needs task reformulation | Not recommended |
 
@@ -31,13 +31,15 @@ Status: research phase, 2026-10-19; revised after the Phase 2 critical review an
    Per-project defect rates range from 1.8% (commons-digester) to 19.3% (giraph). The largest test projects are commons-math (806 commits) and commons-lang (595).
 3. **Languages and projects.** All Java. ant-ivy, commons-{bcel, beanutils, codec, collections, compress, configuration, dbcp, digester, io, jcs, lang, math, net, scxml, validator, vfs}, giraph, gora, opennlp, parquet-mr. `git ls-remote` reaches all 21 at `github.com/apache/<project>`. [V]
 4. **Prediction unit.** Commit (`is_buggy_commit`). Line-level labels cover the 475 defective *test* commits: 26,104 changed lines, of which 7.89% are labelled buggy. [V]
-5. **Label construction and noise.** The construction figure in the replication package shows four steps [V]:
-   1. Participant line labelling of bug-fixing commits (from LLTC4J, Herbold2022b).
-   2. Line-level agreement.
-   3. Filtering of fix lines.
-   4. Bug-inducing commits identified via Git.
+5. **Label construction and noise** (Ni2022 §4 and §6.3, full text read [P]):
+   1. LLTC4J (Herbold2022b): 2,328 bugs in 28 Java projects, manually validated, fixed by 3,498 commits. Four participants labelled every changed line of each fixing commit; a line label needs agreement of at least three.
+   2. A fixing commit is a candidate if at least one line is agreed as "contributing to the bug-fixing".
+   3. For every such line, `git blame` (via PyDriller) on the fixing commit's parent names the bug-inducing commit (BIC). The blamed lines become the buggy lines of the BIC.
+   4. Every other commit is clean, so **bug-fixing commits that are not BICs stay in the clean class** [P; the paper names no exclusion].
+   5. Filters: Java files only, non-functional changes (for example comments) removed, commits changing more than 10,000 lines or 100 files dropped, commits without added lines dropped. Five projects were dropped for lack of raters and two because many commits were missing from GitHub, leaving 21.
+   6. Kamei features come from CommitGuru.
 
-   Clean commits are non-bug-fixing commits that were not identified as bug-inducing. The fix side is therefore validated, but **bug-inducing attribution is still blame-based** (SZZ-style). We found a formatting-only commit labelled defective; see the example in [04-feasibility-demo.md](04-feasibility-demo.md). [V] Read the paper text to confirm the SZZ variant and whether bug-fixing commits are excluded from the clean class. [NV]
+   So the **fix side is manually validated, but the BIC side is plain blame**. The paper names no issue-date filter and no whitespace-, comment-, or refactoring-aware blame [P]. Whether its code used such options was not checked [NV]. We found a formatting-only commit labelled defective (Example 1 in [04-feasibility-demo.md](04-feasibility-demo.md)) [V]. The label-quality audit is in §2a.
 6. **Fields** [V]:
    - `features_{split}.pkl` (pandas DataFrame, 25 columns): `project, parent_hashes, commit_hash, author_name, author_email, author_date, author_date_unix_timestamp, commit_message, la, ld, fileschanged, nf, ns, nd, entropy, ndev, lt, nuc, age, exp, rexp, sexp, classification, fix, is_buggy_commit`.
    - `changes_{split}.pkl`: `[commit_ids, labels, tokenized_messages, {added_code, removed_code}]`. The code is **normalised and tokenised, not a unified diff**, so diffs must be regenerated from Git.
@@ -62,10 +64,18 @@ Status: research phase, 2026-10-19; revised after the Phase 2 critical review an
    - **Churn scope.** Git reproduces `la/ld` for 99.98% of commits in every split (train 16,371/16,374; valid 5,464/5,465; test 5,479/5,480) when counting `.java` files *except* `package-info.java`. Counting every `.java` file left 195 commits unmatched; in 190 of them the only difference was `package-info.java` files, which the benchmark's metrics and `fileschanged` lists omit (368 of the 380 omitted files). Counting all files matched only 68.5% of a 200-commit validation sample. Five commits stay unexplained (giraph 3, opennlp 1, parquet-mr 1).
    - These checks verify how the benchmark defines its *change metrics*. They do not prove that non-Java changes are irrelevant to the labels, so the Java-only input is a documented scope decision ([03-experimental-design.md](03-experimental-design.md) §4).
 9. **Function, class, and caller context.** All 21 repos are Java, so the following work: `git diff --function-context` with Git's built-in `java` diff driver, `git grep -w <identifier> <parent>` for callers, and tree-sitter-java if needed. The commons-codec parent snapshot has 102–114 Java files (≈315–365K tokens), which makes full-snapshot BM25 indexing trivial. [V]
-10. **Splits and leakage** [V, all commits; the protocol itself is NV until Ni2022 is read].
-    - The split is per project, not global. The dataset's author times equal Git's for 100% of commits.
-    - **The split is not strictly chronological.** 159 test commits (2.9%, in 11 projects) are older than their project's newest train commit, by author time *and identically by committer time*. 92 of them are older than the project's *oldest* train commit; the median gap is 3,032 days. Revision 1 attributed this to "SVN-era author-date artefacts"; the committer-time check refutes that guess. The same holds for 10.4% of validation commits, and 20.3% of train commits are newer than their project's oldest test commit.
-    - Consequences: zero-shot LLM inference has no training-time leakage, but trained baselines (B1–B3) can learn from commits newer than some test commits. Report baselines with and without these 159 commits, and do not call the split "time-based".
+10. **Splits and leakage.**
+    - **What the paper says** [P, Ni2022 §6.1]: per project, commits are sorted by timestamp; the first 80% are training data and the remaining 20% test data; "we also keep the distribution as same as the original ones in training and testing data". The released files split ≈60/20/20; the paper does not describe the validation split.
+    - **What the data shows** [V, all commits; class figures from train and validation only]:
+      - The split is per project. The dataset's author times equal Git's for 100% of commits.
+      - 94.8% of all commits sit exactly where a strict per-project 60/20/20 time split would put them (97.5% for test against an 80/20 split; author and committer time give identical results).
+      - Within train plus validation, 652 commits are out of time order. The 326 moved into validation are **94.2% defective**; the 326 moved into train are 5.8% defective. Per-project defect rates of train and validation differ by 0.15 percentage points on average, against 1.7 points expected under a random split (2,000 permutations, none as close).
+      - [I] So the authors equalised each project's defect rate by swapping commits between periods. The validation period's own defect rate was only 3.1%, presumably because recent defects had not yet been fixed (right censoring), so 307 of the 467 defective validation commits were taken from the training period.
+      - Test, label-blind: 342 test commits lie before their project's 80th time percentile, and 614 are older than their project's newest validation commit; 159 are older than the newest train commit. By analogy they are probably mostly defective [I]. **This was not checked and must not be checked with test labels.**
+    - **Consequences:**
+      - *Commit age predicts the label.* On validation, author time alone reaches a within-project AUC of 0.844 (pooled 0.688) [V].
+      - *Supervised baselines.* Logistic regression trained on train, scored on validation: 14 Kamei features AUC 0.792 overall vs 0.768 inside the chronological window; history and experience features alone 0.689 vs 0.579; size only 0.761 vs 0.773 [V]. Time-dependent features are inflated by the split; published JIT-Defect4J baseline results probably are too [I]. Report baselines on the original split (for comparability) *and* in a strictly chronological re-split of train plus validation (test stays locked), and never call the original split "time-based".
+      - *Zero-shot LLMs.* There is no training leakage, but in the evaluation split the commit's era carries label information. Any cue for the era (old Java idioms, library versions, code from the parent snapshot) can raise absolute performance without defect knowledge, and C1–C3 show more snapshot code than C0. C2−C3 is protected because both draw on the same snapshot; C1−C0 and C2−C0 are not. Handling is decision D28 ([03-experimental-design.md](03-experimental-design.md) L15).
     - **Duplicates** (`git patch-id --stable` on the Java diff): 312 commits share a patch with another commit, in 148 groups: 122 within train, 13 within valid, 9 within test, 3 across train and valid, 1 across test and valid, none across train and test. Two commits have no Java change.
 11. **License, access, storage.** There is **no license file** in the JIT-Fine repository [V]. The upstream code is Apache-2.0. Before redistributing derived data, ask the authors and confirm the data-availability statement in the paper. Storage: 75 MB zip, and small clones.
 12. **Difficulty.** Low to moderate. The pickles load with pandas 3.0.6 (with deprecation warnings only) [V].
@@ -78,7 +88,25 @@ Status: research phase, 2026-10-19; revised after the Phase 2 critical review an
 | 12,000 | 94.3% | 80.1% | 83.1% | 96.2–97.2% |
 | 16,000 | 95.7% | 85.4% | 86.9% | 97.7–98.1% |
 
-The 4-project estimate from Phase 2 (93.1% of defective commits kept at 12,000) was too optimistic. Class-specific figures are reported for train and validation only; test labels were not read.
+The 4-project estimate from Phase 2 (93.1% of defective commits kept at 12,000) was too optimistic. Class-specific figures here come from train and validation; test labels were not used for them. Earlier test-label exposure is listed in §8.
+
+### 2a. Label-quality audit of 30 defective validation commits (Gate 1, D26)
+
+**Method.** 30 defective validation commits, sampled with seed 2026 ([feasibility/label_audit.py](../feasibility/label_audit.py); evidence files in `thesis-scratch\label_audit\`, outside Git because they reveal labels). The dataset does not publish which fixing commit produced each label, so the script searches *forward*: later commits (up to 2019, at most 30 files each, no merges, renames not followed) whose deleted lines `git blame` back to the candidate, at most five per candidate, with the Jira type and creation date of every issue key they mention. Two mechanical flags: the candidate is newer than every linked issue report, and every substantive linked line already existed before the candidate (reformatted or moved code). Each case was then rated P (the candidate wrote the code a later bug fix corrects), F (the fix touches code the candidate only reformatted, moved, or refactored), T (the fix's bug was reported before the candidate existed), N (no bug fix among the links), or U (unclear).
+
+**First rating (AI-assisted, not yet checked by a human)** [V for the evidence; the ratings are judgements]:
+
+| Rating | Count | Examples |
+|---|---|---|
+| P, plausible | 8 | `13bbcec2` (commons-vfs) cast to the wrong type, fixed five days later as a ClassCastException; `dd713684` (commons-compress) timestamp handling, fixed under COMPRESS-289 (Bug) |
+| F, pre-existing fault | 3 | `297ac27a` (ant-ivy) and `20126201` (commons-vfs) are reformatting or checkstyle commits |
+| T, bug reported before the candidate | 2 | `ca7a127a` and `dbcf7dd6` (commons-math) merge `*Impl` classes into their interfaces on 2011-11-26; the linked fix is for MATH-692 (Bug), reported 2011-10-18. They moved code that was already faulty |
+| N, not traceable with this evidence | 14 | Four candidates are themselves fixes (for example `9c95a92a`, "avoid CCE in equals", VFS-138), and their only later links are package renames or checkstyle sweeps |
+| U, unclear | 3 | `178136b6` (commons-net) changed the call that the NET-579 fix later replaced, but the missing hostname check predates it |
+
+**Reading.** The mechanical flags were weak: "newer than every linked report" fired for 4 of 30 (two became T on reading; in the other two the linked issue was not a bug the candidate could have caused), and "pre-existing lines" fired for none, because reformatting that joins or splits lines escapes a whitespace-normalised comparison (as in Example 1). At least 5 of 30 labels (17%; 95% Wilson interval 7–34%) have direct evidence against them (F or T). Only 8 (27%) could be confirmed. Most cases cannot be resolved without the dataset's own fix-to-BIC mapping. This agrees with Herbold2022a's finding that blame-based bug-inducing labels are often wrong, and with Example 1. Two repeated AI ratings of the same evidence disagreed on several cases, so these counts are a **low-reliability first pass**.
+
+**Consequences.** The label stays an observed SZZ proxy (no relabelling and no filtering in the primary analysis). S8 (high-confidence subset) gains weight. The audit can only become precise with the LLTC4J fix list (SmartSHARK release) or the JIT-Fine authors' BIC-to-fix mapping; ask for the mapping in the data-permission email (D18). A human second rater still has to rate 10 of the 30 (D26).
 
 ### JIT-Defect-Extended: a derivative published with JIT-LSM
 
@@ -174,14 +202,14 @@ The 4-project estimate from Phase 2 (93.1% of defective commits kept at 12,000) 
 
 **Why not JIT-Defect-Extended as the primary source** [I]: it adds no labels or commits; it lacks 46 test commits; its `added_lines` lists are filtered in an undocumented way; it has no license file; it embeds the label in every record and path; and it cannot provide cross-file context. Use it only to cross-check reconstructed same-file content on a sample and to identify JIT-LSM's evaluation subsets (optional baseline B5 in [03-experimental-design.md](03-experimental-design.md) §9).
 
-**What the Phase 2 review changed and what it did not.** The choice of dataset stands. Three things changed: inputs are restricted to `.java` files, eligibility is measured in tokens (cap 12,000), and the newer public derivative is treated as a leakage and contamination risk rather than as a data source.
+**What the Phase 2 review changed and what it did not.** The choice of dataset stands. Three things changed: inputs are restricted to `.java` files, eligibility is measured in tokens (cap 12,000 in Phase 2, raised to **16,000** after the all-project audit, D4), and the newer public derivative is treated as a leakage and contamination risk rather than as a data source.
 
 **Trade-offs you accept:**
 
 - Low prevalence (8.5%), which calls for enriched sampling.
 - Residual SZZ noise, which calls for sensitivity analyses.
 - An unclear license, which calls for contacting the authors.
-- Pre-2020 code, and labels that have been public as JSON since July 2025, which raise contamination risk (see [05-risks.md](05-risks.md), Risk 4).
+- Pre-2020 code, and labels that have been public since August 2022 (JIT-Fine `data.zip`) and as plain JSON with code since July 2025 (JIT-Defect-Extended), which raise contamination risk (see [05-risks.md](05-risks.md), Risk 4).
 
 **Fallback: ApacheJIT.** Choose it if JIT-Defect4J licensing blocks use, or if more positives or projects are needed. Accept plain-SZZ labels with two-sided censoring, the Hadoop field anomaly, and costlier retrieval. Recommended handling:
 
@@ -199,14 +227,43 @@ The 4-project estimate from Phase 2 (93.1% of defective commits kept at 12,000) 
 
 | # | Check | How to close it |
 |---|---|---|
-| 1 | Read the JIT-Fine paper: SZZ variant, clean-set definition, split protocol (why 159 test commits are older than the newest train commit) | Read Ni2022 §3 |
+| 1 | ~~Read the JIT-Fine paper~~ **Closed:** label protocol and split protocol in §2 items 5 and 10 | Ni2022 §4, §6.1 |
 | 2 | JIT-Defect4J license and redistribution terms | Email the authors; cite the data-availability statement |
 | 3 | ~~Reconstruction across all projects~~ **Closed:** 99.98% of all 27,319 commits | [feasibility/audit_dataset.py](../feasibility/audit_dataset.py) |
 | 4 | ~~Token distributions across all projects~~ **Closed** for diff sizes (all splits) and same-file pools (validation) | Same script |
-| 4a | Label quality of defective commits | Gate 1: review 30 defective validation commits against their fixes |
+| 4a | Label quality of defective commits | First pass done (§2a): ≥ 17% contradicted, 27% confirmed, the rest untraceable. Open: human second rater on 10; the dataset's BIC-to-fix mapping from the authors or SmartSHARK |
 | 5 | Accuracy of enclosing-method boundaries | Gate 2: manual check of 30+ changes (tree-sitter vs Git) |
 | 5a | Why 164 commits are missing from JIT-Defect-Extended, and how JIT-LSM sampled its subsets | Read Huang2026 (library access) or ask its authors |
 | 6 | ~~Duplicated or cherry-picked diffs~~ **Closed:** 148 patch-id groups, none across train and test | Same script; near-duplicates (not identical patches) are still unchecked |
 | 7 | ReDef schema, license, availability of commit IDs | Download figshare data manually (only if the robustness study is adopted) |
 | 8 | Contamination exposure of the chosen LLMs | Document training cutoffs; label-recall probe in the engineering pilot (Gate 3); issue-key mention check and year stratification |
 | 9 | Explanation of the ApacheJIT Hadoop anomaly | Only needed if the fallback is used: inspect the replication notebooks |
+
+## 8. Test-split exposure (authoritative record)
+
+Earlier documents said that test labels were "not read". That was true only of the all-project audit and of class-specific size figures. The second external audit pointed this out; the complete record follows [V, from the scripts in the repository and the ad-hoc scripts in `C:\Users\psain\thesis-scratch\*.py`]. **No LLM was called on any test commit, and no prediction of any kind was made on the test split.**
+
+**Individual test records displayed with their labels or label-bearing data:**
+
+| Commit | How | Shown |
+|---|---|---|
+| `76c125c3b74a…` (commons-codec) | Demo Example 1; selected as the earliest defective commons-codec test commit | Label (defective), message, line-level label, later fix (analysis) |
+| `4063338a3c8c…` (commons-codec) | Demo Example 2; first clean commons-codec test commit with at most two files | Label (clean), message |
+| `6e710a1f78a4…` | First row of `features_test.pkl`, `changes_test.pkl`, and the line-level file, displayed by a schema inspection | Label (defective) and two line-level rows |
+| `1f73722ffb37…` | Second row of `features_test.pkl` in the same inspection | The row was printed truncated; whether the label column was visible is unknown |
+| up to 2 unidentified commons-codec records | `split_check.py` printed the two earliest defective commons-codec test commits (one is `76c125c3`) and the earliest clean one with at most two files (possibly `4063338a`) | Labels and messages |
+
+The rows were identified by position only, without printing labels again (2026-10-19). Identifying the two unidentified records would need another test-label lookup; that is left to the supervisor (D27).
+
+**Aggregate test-label statistics computed in Phase 1 and Phase 2:** split sizes and defect counts (5,480 commits, 475 defective); per-project defect rates over all splits; the defect rate by churn quintile over all splits; defective commits kept under churn limits of 200, 400, and 600 lines; the defect rate of small test commits (at most 5 files and 200 changed lines) vs the rest; the line-level label rate (26,104 lines, 7.89% buggy); defective counts in JIT-LSM's test subsets (150 and 459) and in JIT-Defect-Extended's test commits (452).
+
+**Label-blind test information (allowed):** existence, parents, churn reconstruction, dates, patch IDs, diff sizes, and time-order positions (the all-project audit and the manifest). `feasibility/audit_dataset.py` and `python -m jitctx build-manifest` load `features_test.pkl` for its label-free columns and discard the label column without using it.
+
+**Influence on the design.** Revision 1 chose its size limit from test-split churn statistics. That limit was replaced: the current 16,000-token cap (D4) was chosen from train and validation class figures plus label-blind test retention. No other design parameter is known to depend on test labels; the per-project prevalence is published in Ni2022 Table 2 anyway.
+
+**Rules from now on** (also [../AGENTS.md](../AGENTS.md)):
+
+1. Test labels and label-bearing test files are not opened before Gate 5. `verify_datasets.py` blanks test labels unless `--allow-test-labels` is given, which only reproduces the figures above; `jitctx make-contexts` refuses the test split without `--allow-test` (after the Gate 4 freeze).
+2. Every design choice (prompt, model, budget, chunking, filters, thresholds, metric) is made on train or validation data and recorded in [06-milestone-and-decisions.md](06-milestone-and-decisions.md).
+3. The displayed test records are excluded from the confirmatory sample if D27 is approved; the exclusion is reported.
+4. Any further unavoidable test access is recorded here with date, purpose, and output.

@@ -1,18 +1,18 @@
 # Research & Feasibility Phase: Overview and Proposal
 
 **Thesis:** *The Impact of Repository Context Selection on LLM-Based Just-in-Time Defect Prediction: An Empirical Study* (M.Sc. Professional Software Engineering, Reutlingen University)
-**Phase:** literature and dataset feasibility review (Phase 1), a critical self-review (Phase 2), and a response to an external audit (Phase 3), all 2026-10-19. Only feasibility scripts exist and no LLM has been called. Changes are listed in the [external audit response](#external-audit-response) and the [revision log](#revision-log).
+**Phase:** literature and dataset feasibility review (Phase 1), a critical self-review (Phase 2), responses to two external audits (Phase 3), and the tested context builder (Gate 2), all 2026-10-19. No LLM has been called. Changes are listed in the [external audit response](#external-audit-response), the [second audit response](#second-external-audit-response), and the [revision log](#revision-log).
 
 ## Readiness
 
 | Item | Status |
 |---|---|
-| Research questions | Proposed (revision 3); to agree with your supervisor |
-| Dataset | JIT-Defect4J **conditionally accepted**: reconstruction, dates, and duplicates verified on all 27,319 commits. Open: label protocol (Ni2022), a label-quality audit, data permission |
-| Context construction | Specified; prototype defects fixed and tested. The masked C1 builder and token-bounded windows are not built yet (Gate 2) |
-| LLM scoring | Specified, not validated; needs the engineering pilot (Gate 3) |
+| Research questions | Proposed (revision 3.1); to agree with your supervisor |
+| Dataset | JIT-Defect4J: Gate 1 evidence complete. Ni2022 read; reconstruction, dates, duplicates verified on all 27,319 commits; the split is time-ordered and class-stratified, which makes commit age predictive of the label (D28). Open: human second rater for the label audit, data permission, supervisor sign-off |
+| Context construction | `jitctx` package with C0–C3, tree-sitter C1, token-bounded BM25 windows, rendered-token accounting; unit tests and integration tests on real validation commits. Open: manual checks of enclosing ranges and side-by-side prompts |
+| LLM scoring | Specified (hosted APIs only), not validated; needs the engineering pilot (Gate 3) |
 | Statistical protocol | Draft; the equivalence margin is not yet justified |
-| Evidence limits | JIT-LSM paper unread (closed access); JIT-Context known from its abstract only. All numbers are reproducible with the scripts, hashes, and outputs in [../feasibility/](../feasibility/) |
+| Evidence limits | JIT-LSM paper unread (closed access); JIT-Context known from its abstract only. All numbers are reproducible with the scripts, hashes, and outputs in [../feasibility/](../feasibility/) and [../src/jitctx/](../src/jitctx/) |
 
 ## Proposal (revision 3)
 
@@ -34,7 +34,7 @@ Negative, inconclusive, and equivalence results are planned outcomes, not failur
 **JIT-Defect4J** (Ni2022): labels, splits, and commit IDs, with all code reconstructed from the original Apache Git repositories at the parent commit.
 
 - All 27,319 commits exist with their recorded parent, and Git reproduces the benchmark's churn for 99.98% once the input scope matches the benchmark's (Java files except `package-info.java`) [V].
-- The split is per project and *not* strictly chronological: 159 test commits are older than their project's newest train commit, by author and committer time [V]. This matters for trained baselines, not for zero-shot inference.
+- The split is per project, time-ordered, and then class-stratified: defective commits were moved from earlier periods into later splits to equalise defect rates, so 159 test commits are older than their project's newest train commit and commit age predicts the label [V/P]. This matters for trained baselines and, through era cues, for absolute LLM performance (L15, D28).
 - Inference target: eligible Java changes of the test split, with the SZZ-derived benchmark label as an observed proxy.
 - **JIT-Defect-Extended** (released with JIT-LSM) is a subset of JIT-Defect4J with identical labels, embedded in every record and folder name [V]. It is used only for cross-checks, never as prompt input.
 - Fallback: ApacheJIT (2010–2017, Hadoop merged or excluded). Details: [02-datasets.md](02-datasets.md).
@@ -45,7 +45,7 @@ Negative, inconclusive, and equivalence results are planned outcomes, not failur
 |---|---|
 | Conditions | C0 Java diff · C1 + same-file code (lines already in the diff masked) · C2 + BM25 cross-file windows · C3 + random cross-file windows matched to C2's rendered tokens. Shared budget 2,000 tokens for C1–C3 (alternative 1,000); series 1,000 / 8,000 for C2 and C3; windows bounded by lines *and* tokens |
 | Sample | Test split; label-blind eligibility (diff ≤ 16,000 tokens); all ≈ 400 eligible defective commits plus 2 × clean, proportional by project (N ≈ 1,200) |
-| Models | M1 with exact two-candidate scoring (open weights preferred), M2 an independent second model, M3 optional |
+| Models | M1 with exact two-candidate scoring, M2 an independent second model, M3 optional; all through hosted cloud APIs, no local hosting |
 | Metrics | Primary ROC-AUC if the pilot validates the scores (else MCC, fixed before any test call); MCC, within-project AUC, calibration, cost, tokens, latency |
 | Statistics | Holm over four contrasts (DeLong), commit-level and project-cluster bootstrap CIs, TOST with a *justified* SESOI, noise floor |
 | Baselines | Trivial; size-only and Kamei logistic regression; JITLine re-run (time-boxed); published results for context |
@@ -66,7 +66,7 @@ Full specification: [03-experimental-design.md](03-experimental-design.md).
 ### Why it is feasible
 
 - About 1,200 commits, deterministic Git plumbing, and BM25 in about a second per commit [V].
-- About 69M input tokens for M1 and 21M per further model: roughly $14–$686 for M1, depending on the price per million tokens [I]. An open-weight M1 can run on rented GPU hours instead.
+- About 69M input tokens for M1 and 21M per further model: roughly $14–$686 for M1, depending on the price per million tokens [I].
 - Every expensive step sits behind a gate with explicit pass criteria.
 
 ### Open issues for your supervisor
@@ -106,6 +106,25 @@ Review of the two external audit reports (2026-10-19). Each point was checked ag
 
 **Found beyond the audits:** the benchmark's metrics omit `package-info.java`, and line-based windows do not bound tokens (one 40-line window held 5,813 tokens).
 
+## Second external audit response
+
+Review of the second external audit (2026-10-19), which checked an older archive of this repository. Each point was re-checked against the current files, the JIT-Fine paper, and new measurements.
+
+| # | Audit point | Verdict | Evidence found | Action |
+|---|---|---|---|---|
+| 1 | The claim that test labels were never inspected is wrong | Correct. `verify_datasets.py`, ad-hoc scratch scripts, and the demo examples used test labels; the handoff already listed some of it, the dataset document still said "test labels were not read" | Four test records identified by position, up to two more unidentified; a list of aggregate test-label statistics | Authoritative record and rules in [02-datasets.md](02-datasets.md) §8; `verify_datasets.py` blanks test labels by default; D27 (exclude displayed records) |
+| 2 | `fill()` stops at an oversized single-line window | Correct, reproduced | 4,505-token first window, 7-token second, budget 1,000: nothing selected | Skip and continue, in the prototype and in `jitctx`; tests for the exact case |
+| 3 | Token matching is counted per snippet, not on the joined text | Correct | The prompt contains the joined block | Budgets and C3 matching now use the rendered block; tests assert equality |
+| 4 | 129 passing tests do not establish correctness | Agree | The two defects above passed the old suite | Edge-case tests plus integration checks on real validation commits; still not a proof of methodological validity |
+| 5 | The open-weight, locally scored M1 contradicts the brief | Correct in substance; local hosting was already approval-only | The brief rules out heavy local models | Hosted cloud APIs only (user decision; D12); MCC fallback if no hosted M1 gives valid scores |
+| 6 | Stale 12,000-token cap and inconsistent contamination dates | Correct for two lines: the dataset recommendation still said "cap 12,000", and its trade-off list dated label exposure only to July 2025 (JIT-Defect-Extended), omitting the August 2022 JIT-Fine release that L10 and Risk 4 already named | — | Both lines corrected; superseded values marked as such |
+| 7 | Read Ni2022; audit 30 defective validation commits; clarify the split's effect on baselines | Agree; done except the human second rater | The paper describes a per-project 80/20 time split that "keeps the distribution"; the released split is class-stratified; commit age predicts validation labels (AUC 0.844); Kamei baseline AUC 0.792 vs 0.768 in the chronological window | [02-datasets.md](02-datasets.md) §2 items 5 and 10, §2a; L11, L15, S11; D28 |
+| 8 | Initialise Git | Already done before this audit (`github.com/pankajsain7/llm-context`) | — | `.gitignore` extended for data, labels, and outputs |
+| 9 | Implement C0–C3 with tree-sitter and BM25 | Agree | — | [../src/jitctx/](../src/jitctx/), [../tests/](../tests/) |
+| 10 | Prefer a project directory outside an employer-managed OneDrive | Partly: data, clones, and the environment are already outside OneDrive; the repository itself still sits in OneDrive | — | Left to the user; Git remote is the authoritative copy |
+
+**Found beyond the audit:** the released split is class-stratified (the main threat to absolute results and baselines); `tree-sitter` 0.26.0 crashes on Windows; Python's `splitlines()` disagrees with Git's line numbering on form feeds.
+
 ## Revision log
 
 Phase 2 critical review, 2026-10-19. Each row is a weakness, unsupported assumption, or missing piece of evidence in revision 1, with the evidence found and the change made. The external audit later corrected rows 4, 6, and 7, whose evidence came from four projects only; see the [external audit response](#external-audit-response).
@@ -118,7 +137,7 @@ Phase 2 critical review, 2026-10-19. Each row is a weakness, unsupported assumpt
 | 4 | Assumed median diff of 1,500 tokens and 20–30 tokens per changed line | Measured medians: 696 tokens (random), 2,088 (defective); 34.4 and 18.9 tokens per line [V] | Cost model and eligibility recalculated |
 | 5 | C1 replaced the diff and had no volume match; RQ1 lacked local vs repository | Brief asks whether relevant repository context beats *local* code | C1 is a separate, masked same-file block at the shared budget; new contrast C2−C1 (H1c); sensitivity S9 |
 | 6 | Budget of 4,000 tokens | Same-file pool ≥ 4,000 tokens for only 63.5–75.2% of commits; ≥ 2,000 for 83.0–86.1% [V] | B = 2,000 |
-| 7 | Size cap of 8,000 diff tokens | Keeps 85.1% of defective commits; 12,000 keeps 93.1% [V] | Cap 12,000 (D4) |
+| 7 | Size cap of 8,000 diff tokens | Keeps 85.1% of defective commits; 12,000 keeps 93.1% [V] | Cap 12,000 (D4); **superseded** by 16,000 after the all-project audit (external audit row 4) |
 | 8 | Context quantity only an optional ablation | The brief makes quantity part of the primary variable | RQ3 budget series 1,000 / 2,000 / 8,000 |
 | 9 | Primary metric MCC depends on an arbitrary threshold and on weights | Context can shift the YES rate without better discrimination | Primary ROC-AUC; MCC key secondary; power recomputed in AUC units |
 | 10 | No supervised code-based baseline, no LLM reference | `baselines/JITLine` ships with JIT-Fine [V]; JIT-LSM evaluates on test-split subsets [V] | Baselines B3 (JITLine), B4 (published incl. JIT-LSM), optional B5 |

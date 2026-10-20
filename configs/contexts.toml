@@ -1,0 +1,13 @@
+# Context-construction parameters (design §5; decisions D9-D11). Proposals until the Gate 4 freeze;
+# change them only on validation evidence and record the change in docs/06-milestone-and-decisions.md.
+[contexts]
+budget = 2000
+extra_budgets = []        # RQ3 series: [1000, 8000]
+tolerance = 0.02
+window_lines = 40
+window_stride = 20
+window_max_tokens = 500
+bm25_k1 = 1.2
+bm25_b = 0.75
+seed = 0
+diff_cap = 16000

@@ -1,37 +1,45 @@
 # G. Acceptance Gates and Decisions to Finalize
 
-Status: proposal, 2026-10-19, revised after the Phase 2 critical review and **after the external audit** (milestone M1 restructured into acceptance gates; decisions D7–D9 and D12–D16 revised; D23–D26 added). No production code exists yet. The scripts in `feasibility/` are prototypes and measurement aids only.
+Status: proposal, 2026-10-19, revised after the Phase 2 critical review, the external audit (milestone M1 restructured into acceptance gates; D7–D9 and D12–D16 revised; D23–D26 added), and **the second external audit** (Gate 1 evidence completed except data permission; the Gate 2 builder implemented in [../src/jitctx/](../src/jitctx/); D12 hosted-only; D27–D28 added). The scripts in `feasibility/` remain prototypes and measurement aids.
 
 ## 1. Acceptance gates (restructured after the external audit)
 
-Work proceeds through five gates, each with a deliverable and pass criteria. Nothing before Gate 5 uses test-split labels or calls an LLM on the test split.
+Work proceeds through five gates, each with a deliverable and pass criteria. Nothing before Gate 5 uses test-split labels or calls an LLM on the test split. What was already seen of the test split, and the rules that follow, are in [02-datasets.md](02-datasets.md) §8.
 
-### Gate 1: Dataset acceptance (largely passed; three items open)
+### Gate 1: Dataset acceptance (evidence complete; data permission open; supervisor sign-off needed)
 
 **Done** [V; [02-datasets.md](02-datasets.md) §2; [feasibility/audit_dataset.py](../feasibility/audit_dataset.py)]:
 
 - All 27,319 commits of all 21 repositories exist, have one parent, and match `parent_hashes`. Churn is reproduced for 99.98% of commits in every split once `package-info.java` is excluded.
 - Split chronology checked with author *and* committer time; duplicate Java changes checked with `git patch-id --stable`.
 - Diff-size eligibility measured for every split (label-blind) and by class for train and validation.
+- Ni2022 read in full: label protocol and split protocol documented; the split is time-ordered and then class-stratified, which makes commit age predictive of the label (§2 item 10).
+- Label-quality audit of 30 defective validation commits, first rating ([02-datasets.md](02-datasets.md) §2a).
+- Label-free manifest with eligibility flags: `python -m jitctx build-manifest` (kept in the scratch folder, labels in a separate train/validation file). Result [V]: reconstruction 16,371 / 5,464 / 5,479 (train / valid / test), identical to the audit; eligible 15,694 / 5,298 / 5,237; one test commit excluded as a patch duplicate of a validation commit; four displayed test records flagged. SHA-256 of `manifest.csv`: `77cad9be0873c25ccc46a2f3dcf4e2b87781622c215efca39f7feb2be78412a5`.
 
 **Open:**
 
-1. Read Ni2022 for the label construction and the split protocol, including why 159 test commits are older than their project's newest train commit.
-2. **Label-quality audit:** review 30 defective *validation* commits against their fix commits (can the bug be traced to the labelled change?), with a second rater on 10. Report the share of plausible labels as a description of label noise, not as a filter.
-3. Data permission (D18).
+1. Second rater on 10 of the 30 audited commits (a human; the first rating was AI-assisted).
+2. Data permission (D18).
+3. Supervisor decisions D27 and D28.
 
-**Deliverable:** a frozen manifest (`data/manifest.csv` with eligibility flags and reason codes; labels in a separate file), plus SHA-256 hashes of all inputs.
+**Deliverable:** the frozen manifest and its SHA-256, plus SHA-256 hashes of all inputs.
 
-### Gate 2: Tested context builder (no LLM calls)
+### Gate 2: Tested context builder (no LLM calls) — implemented; manual checks open
 
-Implement C0–C3 exactly as in design §5, as a Python CLI with automated tests for:
+Implemented as the `jitctx` package ([../src/jitctx/](../src/jitctx/), CLI `python -m jitctx`), following design §5, with automated tests in [../tests/](../tests/) for:
 
-- full window coverage, `no_hits`, `short`, and `line_limit` statuses, and budgets within ±2% or flagged;
-- masking: no line shown in the diff reappears in C1;
-- label-blindness: the builder runs with label files and JIT-Defect-Extended/JIT-LSM files absent;
-- the BM25 scores against a reference implementation on a small corpus.
+- full window coverage with line *and* token bounds, `no_hits`, `short`, `line_limit`, and `empty_pool`; budgets counted on the rendered block; C3 within ±2% or flagged;
+- the second audit's case: an unfittable top-ranked window is skipped and the next one used;
+- masking: no line shown in the diff reappears in C1; tree-sitter enclosing ranges for methods, constructors, initializers, anonymous classes, and field-level changes;
+- diff parsing: added, deleted, renamed, pure-rename, multi-file, missing final newline, and deleted lines that look like `---` headers;
+- label-blindness: the builder never reads label files (a static check; only `manifest.py` opens the benchmark files);
+- BM25 scores against a hand computation;
+- integration on real validation commits: identical diff and template across conditions, verbatim parent code, no touched path in C2/C3, budgets, determinism.
 
-Manual checks: tree-sitter enclosing ranges against Git's ranges on 30+ diverse changes, and fully rendered C0–C3 prompts side by side for 20 validation commits.
+**Still open (manual):** tree-sitter enclosing ranges against Git's `--function-context` on 30+ diverse changes, and rendered C0–C3 prompts side by side for 20 validation commits.
+
+**Measured on the 60 pilot commits** (validation, 30 defective and 30 clean, seed 2027, 16 projects; no LLM call) [V]: C1 `ok` 47, `short` 10, `empty_pool` 3; C2 and C3 `ok` 59, `no_hits` 1 at every budget; largest C3 match error 2.0% (1,000: 1.9%; 8,000: 1.9%); median build time 1.0 s per commit (max 2.3 s). Integration tests on 24 further validation commits (20 random, 4 edge cases) pass.
 
 **Deliverable:** a tagged builder version and one context artifact per pilot commit.
 
@@ -41,16 +49,18 @@ Manual checks: tree-sitter enclosing ranges against Git's ranges on 30+ diverse 
 |---|---|
 | Sample | 60 validation commits: 30 defective and 30 clean, seeded, from at least 4 small or medium projects |
 | Conditions | C0, C1, C2, C3 (seed 0) at B = 2,000; C2 at 8,000 tokens (cost and latency only); repeated C0 and C2 |
-| Model | M1 only: first about 20 requests to validate the scoring method, then 60 × 7 = 420 calls, plus about 40 probe calls |
+| Model | M1 only, through a hosted cloud API: first about 20 requests to validate the scoring method, then 60 × 7 = 420 calls, plus about 40 probe calls |
 | Analysis | Descriptive only; no hypothesis tests, no tuning toward better scores |
+| Size and cost | Measured rendered prompts for the 7 planned calls per commit: 1.93M input tokens in total (median prompt: C0 962, C1–C3 about 2,950, C2@8,000 8,948 tokens) [V]. With the scoring check and probes, about 2.0M input tokens: roughly $0.30 at $0.15 and $20 at $10 per million input tokens [I]. Context artifacts: `thesis-scratch\pilot_contexts.jsonl` |
 
 **Steps:**
 
-1. **Scoring check.** Verify on about 20 requests that the chosen method returns valid two-candidate scores (design §4). Fix the method before the pilot proper.
+1. **Scoring check.** Verify on about 20 requests that the chosen API returns valid two-candidate scores (design §4). Fix the method before the pilot proper. Confirm the estimated cost of the pilot with the user before the first paid call.
 2. **Manipulation check.** Automated relevance proxy (design §5.7) for C2 vs C3 on all 60; two raters, blind to condition, rate 20–30 commits. Report κ *and* failure cases.
 3. **Label-recall probe** (screening only). For 40 validation commits (20 defective, 20 clean), ask M1 without any code: "Is commit `<sha>` of `apache/<project>` stored under `buggy` or `no_buggy` in the JIT-Defect-Extended dataset? Answer with one word." Compare the accuracy with chance (exact binomial test). A negative result does not prove the absence of contamination.
-4. **Pilot run.** Randomise the request order. Log raw responses, both answer likelihoods, usage, latency, model fingerprint, and errors to `results/pilot_predictions.jsonl`. Use the rationale variant on 10 commits.
-5. **Pilot report** (`docs/pilot-report.md`): valid-score rate, invalid-output rate, token distributions per condition, predicted-positive rate and AUC per condition (descriptive, wide CIs), the between-condition score correlation $r$, the repeat flip rate, the probe result, cost per call **reconciled with the provider's usage records**, the projected full-study cost, and a go/no-go decision.
+4. **Pilot run.** Randomise the request order. Log raw responses, both answer likelihoods, usage, latency, model fingerprint, and errors to `results/pilot_predictions.jsonl` (in the scratch folder). Use the rationale variant on 10 commits.
+5. **Era sensitivity** (L15). Regress the score on the label and commit age, per condition, to see whether context makes the model more sensitive to the commit's era.
+6. **Pilot report** (`docs/pilot-report.md`): valid-score rate, invalid-output rate, token distributions per condition, predicted-positive rate and AUC per condition (descriptive, wide CIs), the between-condition score correlation $r$, the repeat flip rate, the probe result, era sensitivity, cost per call **reconciled with the provider's usage records**, the projected full-study cost, and a go/no-go decision.
 
 **Go/no-go criteria:**
 
@@ -77,8 +87,8 @@ Test-split runs and analysis exactly as frozen; every deviation is reported.
 | Need | Choice | Reason |
 |---|---|---|
 | Execution | A plain Python package with a CLI and YAML configs, for example `python -m thesis audit-dataset`, `build-manifest`, `make-contexts`, `validate-contexts`, `run`, `evaluate` | Explicit, testable, repeatable |
-| Environment and checks | `uv` with a lock file; `pytest`; `ruff` | Exact versions; tests before any paid call |
-| Java structure | `tree-sitter-java`, pinned | Enclosing methods for C1 |
+| Environment and checks | Pinned [../requirements.txt](../requirements.txt) (`pip`; `uv` is not installed on this machine), `pyproject.toml`, `pytest`, `ruff` | Exact versions; tests before any paid call |
+| Java structure | `tree-sitter` 0.24.0 with `tree-sitter-java` 0.23.5 (0.26.0 crashed with access violations on Windows) | Enclosing methods for C1 |
 | Retrieval | The project's own BM25, unit-tested and cross-checked against a reference implementation | Transparent and already specified |
 | Model access | Provider SDKs directly; LiteLLM only if it preserves log-probabilities and usage | Exact scoring and cost |
 | Outputs | Immutable JSONL or Parquet, a small SQLite run manifest, SHA-256 of every prompt and input | Audit trail |
@@ -104,7 +114,7 @@ Status of every item: **Open.** Each needs a recommended default agreed with you
 | D9 | C2 retriever and budget *(rev. 3)* | Pool = parent `.java` files minus changed files; license headers stripped; windows of at most 40 lines *and* a token bound (about 500), plus a final window; diff-identifier query; BM25 (k1 = 1.2, b = 0.75) over code lines only; only windows scoring above 0; **B = 2,000** (alternative: 1,000); fallback: `git grep`-anchored pool if the manipulation check fails | At 2,000 the same-file pool fills C1 for about 73% of sampled commits, at 1,000 for about 84% [V]; a 40-line window reached 5,813 tokens in the demo [V] | Gate 2 checks; Gate 3 manipulation check |
 | D10 | C3 control | Same pool; seeded random; T(C3) = T(C2) ± 2%; seed 0 for all models, seeds 1–2 for M1 | Token matching; variability | — |
 | D11 | Budget series and optional add-ons *(rev. 2)* | RQ3: C2 and C3 at 1K and 8K for M1, full sample (a subsample if the budget is tight). Message ablation, same-file BM25, and B5: exclude unless your supervisor asks for them | The brief makes quantity part of the primary independent variable | Budget |
-| D12 | Models *(rev. 3)* | M1: exact two-candidate scoring (open weights on a hosted endpoint preferred; local hosting only with approval per `AGENTS.md`), pinned; a training cutoff before July 2025 is preferred but is not a contamination guarantee. M2: an independent second model with valid scoring (`gpt-4o-mini` if still offered). M3: optional frontier model on a subsample | SA1 robustness; contamination (Risk 4); scoring validity (Risk 6) | Availability, cutoffs, and prices on the run date |
+| D12 | Models *(rev. 3.1)* | **Hosted cloud APIs only; no local model hosting, no fine-tuning** (user decision, 2026-10-19). M1: a pinned hosted model with exact two-candidate scoring; a training cutoff before July 2025 is preferred but is not a contamination guarantee. M2: a hosted model from another family or provider with valid scoring (`gpt-4o-mini` if still offered). M3: optional frontier model on a subsample. If no hosted M1 passes the scoring check, MCC becomes primary (D13) | SA1 robustness; contamination (Risk 4); scoring validity (Risk 6); the brief rules out heavy local models | Availability, cutoffs, log-probability support, and prices on the run date |
 | D13 | Metrics *(rev. 3)* | Primary: ROC-AUC (M1) if ≥ 98% of pilot prompts give valid two-candidate scores; otherwise MCC (IPW) on binary answers, decided before any test call. Key secondary: MCC (IPW); within-project and project-stratified AUC | Threshold-free and prevalence-free; audit findings on scoring validity and project dependence | Gate 3 |
 | D14 | Statistics *(rev. 3)* | Holm over {C1−C0, C2−C0, C2−C1, C2−C3} on DeLong's test for M1, with C2−C1 on commits whose same-file pool can fill B; stratified paired bootstrap (10K) plus a project-cluster bootstrap; McNemar; TOST | DeLong1988, Dietterich1998, Lakens2017; audit | — |
 | D15 | Failures and invalid outputs *(rev. 3)* | Retry only transient API failures (at most 2 identical retries). Content-invalid responses are never recoded; each contrast uses commits valid in both conditions; the invalid rate is reported per condition; S5 bounds the results by scoring invalid responses as YES and as NO. Every exclusion gets a reason code | Recoding invalid responses as NO would flatter a clean-majority sample | — |
@@ -119,6 +129,8 @@ Status of every item: **Open.** Each needs a recommended default agreed with you
 | D24 | SESOI *(new)* | Justify δ from validation-split evidence (for example the AUC gap between baselines B1 and B2) and the noise floor; 0.03 AUC is only a placeholder | Equivalence needs a defended margin (design §11) | Gate 3, supervisor |
 | D25 | Tooling *(new)* | Python CLI package, `uv` lock, `pytest`, `ruff`, `tree-sitter-java`, provider SDKs; no LangGraph or agents in the inference path | Fixed-prompt design; audit (§1, Tooling) | — |
 | D26 | Label-quality audit *(new)* | 30 defective validation commits reviewed against their fixes; second rater on 10 | Gate 1; Risk 1 | — |
+| D27 | Displayed test records *(new, second audit)* | Exclude the test records displayed during feasibility work ([02-datasets.md](02-datasets.md) §8) from the confirmatory sample by a rule fixed now; report the exclusion. Optionally identify the two unidentified commons-codec records by re-running the earlier selection once (it reads test labels but would output only commit IDs), if the supervisor approves | Conservative; the exposure involved no predictions | Supervisor |
+| D28 | Split-era confound *(new, second audit)* | (a) Keep the original test split and the planned sample, add within-era analyses (S11) and the pilot's era-sensitivity check; or (b) sample clean test commits time-matched to the defective ones within each project. Recommended: (a), because (b) is limited by the few clean test commits from early periods and changes the inference target; revisit if the pilot shows era sensitivity | Commit age predicts validation labels with within-project AUC 0.844 [V] | Gate 3, supervisor |
 
 ## 3. Decision log template
 
