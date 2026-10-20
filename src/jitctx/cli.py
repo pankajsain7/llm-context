@@ -70,6 +70,31 @@ def cmd_make_contexts(a):
             print(f"[{k}/{len(rows)}] {r['project']} {r['commit'][:10]}", file=sys.stderr)
 
 
+def c2_c3_pairs(recs: list[dict], tol: float) -> tuple[Counter, list[str], list[float]]:
+    """Every C3 record against its C2 record at the same budget, whatever the status.
+
+    Returns status pairs, violations (C3 not within `tol` below C2's tokens, or not empty when C2 is), and the
+    share of C3's code lines that C2 also shows (overlap is allowed by design §5.5, but must be reported).
+    """
+    idx = {(r["commit"], r["condition"]): r for r in recs}
+    pairs, bad, overlap = Counter(), [], []
+    for (sha, cond), c3 in idx.items():
+        if not cond.startswith("C3"):
+            continue
+        c2 = idx.get((sha, "C2" + cond[2:]))
+        if c2 is None:
+            bad.append(f"{sha[:10]} {cond}: no C2 record")
+            continue
+        pairs[(cond, c2["status"], c3["status"])] += 1
+        t2, t3 = c2["context_tokens"], c3["context_tokens"]
+        if not (t3 == t2 == 0 or (t2 > 0 and t2 * (1 - tol) <= t3 <= t2)):
+            bad.append(f"{sha[:10]} {cond}: C2 {t2} tokens, C3 {t3}")
+        lines = [{(s["path"], n) for s in r["sources"] for n in range(s["start"], s["end"] + 1)} for r in (c2, c3)]
+        if lines[1]:
+            overlap.append(len(lines[0] & lines[1]) / len(lines[1]))
+    return pairs, bad, overlap
+
+
 def cmd_summarize(a):
     with open(a.jsonl, encoding="utf-8") as f:
         recs = [json.loads(line) for line in f]
@@ -84,6 +109,13 @@ def cmd_summarize(a):
         if errs:
             line += f" |match error| max={max(errs):.4f} >2%: {sum(e > 0.02 for e in errs)}"
         print(line)
+    pairs, bad, overlap = c2_c3_pairs([r for r in recs if r["condition"] != "ALL"], Config().tolerance)
+    print("C2/C3 status pairs:", {" ".join(k): v for k, v in sorted(pairs.items())})
+    print(f"C3 token-match violations: {len(bad)} of {sum(pairs.values())}", *bad[:20], sep="\n  ")
+    if overlap:
+        overlap.sort()
+        print(f"C3 lines also in C2: mean {sum(overlap) / len(overlap):.3f}, median {overlap[len(overlap) // 2]:.3f}, "
+              f"max {overlap[-1]:.3f}, any overlap in {sum(o > 0 for o in overlap)} of {len(overlap)}")
 
 
 def main(argv=None):

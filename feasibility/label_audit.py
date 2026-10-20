@@ -1,6 +1,7 @@
 """Label-quality audit evidence for defective JIT-Defect4J *validation* commits (Gate 1, decision D26).
 
 Usage: python label_audit.py --root <scratch> [--n 30] [--seed 2026] [--jira]
+       python label_audit.py --root <scratch> --recheck <project>:<sha> ...   (exhaustive check of single cases)
 For each sampled bug-inducing commit (BIC) this script searches later history for commits whose deleted
 lines `git blame` back to the BIC (forward SZZ; commits touching more than 30 files are skipped), lists their
 Jira keys, optionally fetches the issue type and creation date from the public Apache Jira, and flags two
@@ -8,6 +9,10 @@ mechanical warning signs:
   * the BIC is newer than the issue report (it cannot have introduced that bug);
   * every substantive linked BIC line already existed before the BIC, in the same file or in code the BIC
     deleted elsewhere (reformatting or moving).
+The search is deliberately limited and can miss the fix that produced the label: at most 400 later commits that
+touch the BIC's files, at most 5 links, commits touching more than 30 files skipped, history before 2020 only,
+renames after the BIC not followed (package renames end the trail), plain `git blame` (no -w/-M/-C), and only
+the files the BIC added lines to. A missing or contradicting link is therefore not proof that a label is wrong.
 Outputs go to <root>/label_audit/ (they reveal validation labels, so they stay outside Git):
 audit.csv and one evidence file per commit for the manual rating. Uses later history: analysis only.
 Never use on the test split.
@@ -105,13 +110,51 @@ def jira(key):
         return {"error": type(e).__name__}
 
 
+def recheck(repo, bic):
+    """Exhaustive variant of `linked_commits` for one candidate (no scan, link, or file-count limits), with
+    whitespace- and move-aware blame counts per link and a line-break-insensitive test of whether the linked lines
+    already existed in the code the candidate deleted. Renames after the candidate are still not followed."""
+    global MASS_CHANGE
+    saved, MASS_CHANGE = MASS_CHANGE, 10**9
+    try:
+        added, _, links = linked_commits(repo, bic, max_scan=10**9, max_links=10**9)
+    finally:
+        MASS_CHANGE = saved
+    removed = "".join(norm(t) for hs in hunks(git(repo, "diff", "-U0", f"{bic}^", bic, *JAVA)).values()
+                      for h in hs for _, t in h["old"])
+    print(f"{bic[:10]}: {len(links)} linked later commits")
+    for link in links:
+        c, counts = link["commit"], {}
+        for opts in ((), ("-w",), ("-w", "-M", "-C")):
+            n = 0
+            for hs in hunks(git(repo, "diff", "-U0", f"{c}^", c, "--", *added)).values():
+                for h in hs:
+                    if h["old"] and h["old_path"] in added:
+                        blame = git(repo, "blame", "--porcelain", *opts, "-L", f"{h['old'][0][0]},{h['old'][-1][0]}",
+                                    f"{c}^", "--", h["old_path"], check=False)
+                        n += sum(m[1] == bic for m in re.finditer(r"^([0-9a-f]{40}) \d+ \d+", blame, re.MULTILINE))
+            counts[" ".join(opts) or "plain"] = n
+        texts = [t for t in (norm(added.get(x["path"], {}).get(x["line"], "")) for x in link["lines"]) if len(t) >= 8]
+        issues = {k: jira(k) for k in link["keys"]}
+        print(f"  {c[:10]} {link['subject'][:70]!r} keys {issues}\n    lines blamed to the candidate {counts}; "
+              f"every substantive linked line already in the candidate's deleted code (ignoring all whitespace, "
+              f"including line breaks): {bool(texts) and all(t in removed for t in texts)}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, required=True)
     ap.add_argument("--n", type=int, default=30)
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--jira", action="store_true")
+    ap.add_argument("--recheck", nargs="+", metavar="PROJECT:SHA", help="exhaustive re-check of single candidates")
     args = ap.parse_args()
+    if args.recheck:
+        for item in args.recheck:
+            project, sha = item.split(":")
+            repo = args.root / "repos" / project
+            recheck(repo, git(repo, "rev-parse", sha).strip())
+        return
     import pandas as pd
 
     with warnings.catch_warnings(), open(args.root / "jitfine/data/data/jitfine/features_valid.pkl", "rb") as fh:

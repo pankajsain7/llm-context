@@ -55,7 +55,10 @@ def read_blobs(repo: Path, rev: str, paths: list[str]) -> dict[str, str]:
 
 
 def head_revision(repo: Path) -> str:
+    """HEAD, with "-dirty" if the builder's code or configuration differs from it (then HEAD does not identify it)."""
     try:
-        return decode(git(repo, "rev-parse", "HEAD")).strip()
+        rev = decode(git(repo, "rev-parse", "HEAD")).strip()
+        dirty = git(repo, "status", "--porcelain", "--", "src", "configs").strip()
+        return rev + ("-dirty" if dirty else "")
     except subprocess.CalledProcessError:
         return "unknown"

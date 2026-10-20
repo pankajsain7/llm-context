@@ -110,3 +110,20 @@ def test_context_builder_never_touches_label_sources():
             assert not re.search(r"pickle|is_buggy_commit|features_|changes_", text), src.name
     cli = (pkg / "cli.py").read_text(encoding="utf-8")
     assert "from .manifest import build" in cli and not re.search(r"^from \.manifest", cli, re.MULTILINE)
+
+
+def test_c2_c3_pair_check_covers_every_status():
+    from jitctx.cli import c2_c3_pairs
+
+    def rec(sha, cond, status, tokens, spans=()):
+        return {"commit": sha, "condition": cond, "status": status, "context_tokens": tokens,
+                "sources": [{"path": "A.java", "start": a, "end": b} for a, b in spans]}
+    recs = [rec("a", "C2", "ok", 1000, [(1, 10)]), rec("a", "C3", "ok", 990, [(6, 15)]),  # 5 of 10 lines shared
+            rec("b", "C2", "no_hits", 0), rec("b", "C3", "no_hits", 0),
+            rec("c", "C2", "short", 500, [(1, 4)]), rec("c", "C3", "line_limit", 300, [(20, 30)]),  # 40% under
+            rec("d", "C2@8000", "ok", 8000), rec("d", "C3@8000", "ok", 8001),  # over the target
+            rec("e", "C3", "ok", 10)]  # orphan
+    pairs, bad, overlap = c2_c3_pairs(recs, 0.02)
+    assert sum(pairs.values()) == 4 and pairs[("C3", "no_hits", "no_hits")] == 1
+    assert [b.split()[0] for b in bad] == ["c", "d", "e"]
+    assert overlap == [0.5, 0.0]

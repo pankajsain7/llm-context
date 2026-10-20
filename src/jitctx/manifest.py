@@ -20,6 +20,23 @@ INSPECTED_TEST_COMMITS = frozenset({"76c125c3b74a390a39cdcd6666cf7e9cea0e5c1d",
                                     "6e710a1f78a4a733020a4b2d1f07b6fe4c6684f0",
                                     "1f73722ffb375010e74eaa5b99004ad88df93bf6"})
 LABEL_SPLITS = ("train", "valid")
+SPLIT_ORDER = {"train": 0, "valid": 1, "test": 2}
+
+
+def flag_duplicates(m: pd.DataFrame) -> pd.DataFrame:
+    """Patch-id duplicate flags (design L8). `m` must be in chronological order.
+
+    dup_keep: the first commit of each patch id within its split. dup_earlier_split: the patch also occurs in an
+    earlier split (train < valid < test), so a model trained or tuned there has seen it; such commits are not
+    eligible for evaluation (a validation copy of a training patch, a test copy of a training or validation patch).
+    """
+    grouped = m.dropna(subset=["patch_id"]).groupby("patch_id")
+    rank = m.split.map(SPLIT_ORDER)
+    first_split = m.patch_id.map(rank.groupby(m.patch_id).min())
+    return m.assign(dup_group_size=m.patch_id.map(grouped.size()).fillna(1).astype(int),
+                    dup_other_split=m.patch_id.map(grouped.split.nunique()).fillna(1) > 1,
+                    dup_earlier_split=(first_split < rank).fillna(False).astype(bool),
+                    dup_keep=~m.duplicated(subset=["patch_id", "split"]) | m.patch_id.isna())
 
 
 def load_split(root: Path, split: str) -> tuple[pd.DataFrame, pd.Series | None]:
@@ -80,13 +97,8 @@ def build(root: Path, splits=("train", "valid", "test"), cap: int = 16000, log=p
     m["recon_ok"] = m.exists & m.parent_ok.fillna(False).astype(bool) & m.numstat_ok.fillna(False).astype(bool)
     m["has_java_change"] = m.n_java_files.fillna(0) > 0
     m["within_cap"] = m.t_c0.fillna(cap + 1) <= cap
-    m = m.sort_values(["author_time", "commit"]).reset_index(drop=True)
-    grouped = m.dropna(subset=["patch_id"]).groupby("patch_id")
-    m["dup_group_size"] = m.patch_id.map(grouped.size()).fillna(1).astype(int)
-    m["dup_other_split"] = m.patch_id.map(grouped.split.nunique()).fillna(1) > 1
-    m["dup_keep"] = ~m.duplicated(subset=["patch_id", "split"]) | m.patch_id.isna()
+    m = flag_duplicates(m.sort_values(["author_time", "commit"]).reset_index(drop=True))
     m["inspected_test_record"] = m.commit.isin(INSPECTED_TEST_COMMITS)
-    m["eligible"] = (m.recon_ok & m.has_java_change & m.within_cap & m.dup_keep
-                     & ~((m.split == "test") & m.dup_other_split))
+    m["eligible"] = m.recon_ok & m.has_java_change & m.within_cap & m.dup_keep & ~m.dup_earlier_split
     lab = pd.concat(labels, ignore_index=True) if labels else pd.DataFrame(columns=["commit", "split", "is_buggy_commit"])
     return m.sort_values(["split", "project", "author_time", "commit"]).reset_index(drop=True), lab

@@ -13,6 +13,12 @@ def test_first_code_line_is_the_package_line():
     assert first_code_line(["class A {}"]) == 1
 
 
+def test_default_package_file_still_loses_its_license_header():
+    assert first_code_line(["/*", " * Licensed ...", " */", "", "// note", "import a.B;", "class A {}"]) == 6
+    assert first_code_line(["/* one line */", "class A {}"]) == 2
+    assert first_code_line(["// only comments"]) == 1
+
+
 def test_enclosing_method():
     assert enclosing_lines(FOO, {16}) == set(range(14, 19))
 

@@ -19,8 +19,21 @@ def split_lines(text: str) -> list[str]:
 
 
 def first_code_line(lines: list[str]) -> int:
-    """1-based number of the `package` line, i.e. the first line kept after stripping the license header."""
-    return next((i + 1 for i, line in enumerate(lines) if line.startswith("package ")), 1)
+    """1-based number of the first line kept after stripping the license header: the `package` line, or, in the
+    default package, the first line after the leading comments and blank lines."""
+    pkg = next((i + 1 for i, line in enumerate(lines) if line.startswith("package ")), None)
+    if pkg:
+        return pkg
+    in_block = False
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if in_block:
+            in_block = "*/" not in s
+        elif s.startswith("/*"):
+            in_block = "*/" not in s[2:]
+        elif s and not s.startswith("//"):
+            return i + 1
+    return 1
 
 
 def _rows(node: Node) -> range:
