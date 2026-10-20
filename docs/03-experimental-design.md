@@ -113,7 +113,7 @@ Every condition contains the identical C0 diff, `git diff -U3 -M <parent> <commi
 ### 5.1 Rules shared by all context conditions
 
 - **Snapshot.** All code is read from `<parent>` via `git ls-tree -r` and `git cat-file --batch`; no checkout.
-- **Preprocessing.** Strip each file's leading license or comment header (everything before `package`) and normalise line endings.
+- **Preprocessing.** Strip each file's leading license or comment header (everything before `package`; in a default-package file without a `package` line, the leading comments and blank lines) and normalise line endings. The default-package case was found in the 2026-10-20 relevance inspection: a licence block in `src/test/maxima/.../RealFunctionValidation.java` was the top C2 window of a pilot commit.
 - **Filling and token accounting** (implemented in [../src/jitctx/select.py](../src/jitctx/select.py) and [../src/jitctx/local.py](../src/jitctx/local.py)). Budgets and matches are counted on the *rendered* block (snippet headers, markers, and code), never as a sum of separately counted snippets, with o200k_base as the reference tokenizer so that every model receives identical text. Provider-reported tokens are logged separately for cost. Units (lines for C1, windows for C2 and C3) are added in rank order. A unit that does not fit is cut at a line boundary; if not even its first line fits, it is **skipped and the next unit is tried** (the second audit showed that stopping there left C2 empty when one huge line ranked first). Each block gets a status:
   - `ok`: within 2% below the target;
   - `line_limit`: below that, and at least one unit could not be fitted (the count of skipped units is logged);
@@ -156,7 +156,7 @@ Examples [V]: for `76c125c3` the masked same-file pool has 5,499 tokens, 3,657 o
 Same pool and windows as C2.
 
 1. Order the windows by a permutation seeded with `sha256(commit_sha + ":" + seed)`.
-2. Fill to $T_{C2}\pm2\%$ with the §5.1 rule.
+2. Fill to $T_{C2}\pm2\%$ with the §5.1 rule. If the gap left is smaller than any snippet header plus one line (headers of deep package paths cost 24–30 tokens), no window fits and C3 ends as `line_limit`, slightly below the band. Such pairs are kept in the primary analysis with their match error and flagged; S3 excludes them. Observed [V, 200 random eligible validation commits, label-free]: 1 of 600 C2/C3 pairs (2.1% below, opennlp at 1,000 tokens).
 
 Overlap with C2 is allowed and is reported. Seed 0 is used for all models; seeds 1–2 are added for M1 only.
 
@@ -187,14 +187,14 @@ If C2 is not clearly more relevant than C3 on the validation split, apply the **
 | L5 | Identical conditions apart from context | Same template, block header, block order, model ID, parameters, and output constraint |
 | L6 | No tuning on test | The template, B, chunking, and parsing are fixed on the validation split. The test split is locked. Pre-register (Git tag or OSF) before test inference |
 | L7 | Deterministic exclusion and truncation | Eligibility depends on reconstruction and token counts (§8) and is computed label-blind. The diff is never truncated; context blocks follow the deterministic fill rule (§5.1) |
-| L8 | Duplicate and cherry-picked changes | `git patch-id --stable`; keep one instance per patch ID |
+| L8 | Duplicate and cherry-picked changes | `git patch-id --stable`; keep one instance per patch ID within a split, and exclude any commit whose patch occurs in an earlier split (§8 item 4) |
 | L9 | Matched random control | Per-instance token match, same pool, recorded seeds |
 | L10 | Contamination (reduced, not excluded) | Exposure cannot be ruled out: the commits and their later fixes have been public since 2001–2019, the benchmark labels since August 2022 (JIT-Fine `data.zip` [V]), and labels with code as plain JSON since July 2025 (JIT-Defect-Extended [V]). Controls: no messages or issue keys in prompts; record each model's training cutoff (an earlier cutoff only avoids the most accessible plain-text copy); a label-recall probe as a *screening* check, whose negative result does not prove absence; flags for rationales that mention an issue key (`[A-Z]+-\d+`) or a later fix; results by commit year; claims limited to "performance on public historical commits". Within-model contrasts are less exposed than absolute performance, because every condition contains the same diff |
-| L11 | Project and time effects on baselines | Train baselines on the train split only. Report results per project. Because the split is class-stratified (L15), also report B1–B3 in a strictly chronological re-split of train plus validation (test untouched), where time-dependent features lose much of their apparent value (Kamei LR AUC 0.792 → 0.768 on validation [V]) |
+| L11 | Project and time effects on baselines | Train baselines on the train split only. Report results per project. Because the split is class-stratified (L15), also report B1–B3 in a strictly chronological re-split of train plus validation (test untouched), where time-dependent features lose much of their apparent value (Kamei LR AUC 0.792 → 0.771 on validation [V]) |
 | L12 | Failure accounting | Reason codes for unresolvable commits, API errors, retries, invalid outputs, and empty pools. Analyse the intention-to-treat population plus sensitivity analyses |
 | L13 | Time drift not confounded with condition | Randomise the request order across conditions and instances within each model run, and finish each model's run within a short window |
 | L14 | Input scope matches the benchmark's change definition | Diffs and context use Java files except `package-info.java`, the scope of the benchmark's `la/ld` [V]. Whether the labels ignore other files is not verified, so the scope is a documented task definition |
-| L15 | Split-era confound (*new, second audit*) | The released split is class-stratified, so defective evaluation commits are disproportionately older than clean ones: on validation, commit age alone predicts the label with within-project AUC 0.844 [V, [02-datasets.md](02-datasets.md) §2 item 10]. Controls: no dates in prompts (already); report every contrast also *within era strata* (project × period, S11); in the pilot, regress the LLM score on label and commit age to measure era sensitivity per condition; interpret C1−C0 and C2−C0 with this caveat, C2−C3 being protected by design. Whether to draw clean comparison commits time-matched instead is decision D28 |
+| L15 | Split-era confound (*new, second audit*) | The released split is class-stratified, so defective evaluation commits are disproportionately older than clean ones: on validation, commit age alone predicts the label with project-stratified AUC 0.836 [V, [02-datasets.md](02-datasets.md) §2 item 10]. Controls: no dates in prompts (already); report every contrast also *within era strata* (project × period, S11); in the pilot, regress the LLM score on label and commit age to measure era sensitivity per condition; interpret C1−C0 and C2−C0 with this caveat, C2−C3 being protected by design. Whether to draw clean comparison commits time-matched instead is decision D28 |
 | L16 | Test-split exposure (*new*) | The test records and statistics already seen are listed in [02-datasets.md](02-datasets.md) §8. None may inform a design choice; the displayed test records are excluded from the confirmatory sample if D27 is approved |
 
 ## 7. Models
@@ -219,7 +219,7 @@ If C2 is not clearly more relevant than C3 on the validation split, apply the **
   1. Reconstruction passes: SHA and parent exist, and numstat over Java files except `package-info.java` equals `la/ld` (99.98% of commits [V]).
   2. At least one in-scope Java change (2 of 27,319 commits have none [V]).
   3. $T(C0)\le 16{,}000$ tokens (o200k_base) **(decision D4)**.
-  4. The patch ID is unique within the split (the earliest commit of a group is kept), and a test commit whose patch also occurs in train or validation is excluded (1 group [V]).
+  4. The patch ID is unique within the split (the earliest commit of a group is kept), and a commit whose patch already occurs in an earlier split (train before validation before test) is excluded, so no evaluated commit was seen by a model trained or tuned on an earlier split: 1 test commit (a validation patch) and, since 2026-10-20, 2 validation commits (training patches, gora) [V; tested in [../tests/test_manifest.py](../tests/test_manifest.py)].
   5. *(Proposed, D27)* The test records displayed during feasibility work ([02-datasets.md](02-datasets.md) §8) are excluded from the confirmatory sample by a documented rule.
 
   The label-free manifest with these flags is built by `python -m jitctx build-manifest` ([../src/jitctx/manifest.py](../src/jitctx/manifest.py)).
@@ -274,20 +274,21 @@ Exploratory: a logistic regression of the label on the LLM score plus log churn,
 ## 11. Statistical analysis plan
 
 1. **Confirmatory family** (M1, seed 0, B = 2,000): {C1−C0, C2−C0, C2−C1, C2−C3}. Holm correction at α = .05, applied to DeLong's test for paired AUCs. C2−C1 is evaluated on the commits whose masked same-file pool can fill B (a label-blind criterion, §5.6); the other three contrasts use all eligible commits.
-2. **Estimation:**
-   - Paired bootstrap over commits, stratified by label, with 10,000 replicates. Report 95% CIs for every ΔAUC.
-   - **Project-aware uncertainty:** repeat the CIs with a cluster bootstrap over projects, and report within-project and project-stratified AUCs (§10). If pooled and within-project results disagree, report both and give the within-project results priority in the interpretation.
+2. **Unit of inference and project dependence** *(finalized proposal, 2026-10-20; D14)*. The inference target is the eligible commits of the **21 benchmark projects** (§8). The projects are therefore fixed strata, not a random sample, and the confirmatory test (item 1) and its primary CI condition on them. A claim that an effect generalises to *other* projects needs the project-cluster CI below, and is made only if that CI excludes 0 as well. Evidence [V, validation; [../feasibility/split_analysis.py](../feasibility/split_analysis.py) §7]: for the paired ΔAUC of two supervised baselines (B2 − B1 = 0.031), the commit-level CI is 0.022 to 0.039 and the project-cluster CI 0.008 to 0.050, about 2.6 times wider. So project dependence is large, and with 21 clusters the cluster CI is approximate (percentile cluster bootstraps tend to undercover with few clusters [BK]); S4 (leave one project out) is reported alongside.
+3. **Estimation:**
+   - **Primary CI:** paired bootstrap over commits, stratified by project × label, with 10,000 replicates. Report 95% CIs for every ΔAUC.
+   - **Project-generalisation CI:** paired cluster bootstrap over projects (10,000 replicates), for every contrast, plus within-project ΔAUC per project (projects with at least 10 eligible defective commits) and the project-stratified ΔAUC (§10). If pooled and within-project results disagree in sign, report both and give the within-project results priority in the interpretation.
    - Secondary effect sizes, always with CIs: ΔMCC (IPW recomputed in each replicate) and the discordant-pair odds ratio $b/c$ from McNemar's table, with McNemar's exact test.
-   - The power figures in §8 are planning approximations, not guarantees; feasibility is judged with the pilot's actual variance.
-3. **Equivalence:** the SESOI must be justified and agreed with your supervisor before test inference. Proposed procedure: anchor $\delta$ to a difference the field treats as meaningful, measured on the *validation* split before any test call, for example the AUC gap between the size-only baseline (B1) and the 14-metric baseline (B2), and never below the noise floor (item 4). The 0.03 AUC used in §8 is a placeholder, not a justified value. TOST: equivalence holds only if the 90% CI lies within $\pm\delta$. A non-significant difference with a wider CI is reported as **inconclusive**, never as "no effect". Every contrast is reported as superior, inferior, equivalent, or inconclusive.
-4. **Noise floor:** repeat C0 and C2 for M1 on 200 commits with identical settings. Report the flip rate and the repeat ΔAUC distribution (Ouyang2025). Effects within this band are not interpreted.
-5. **Invalid outputs:** only transient API failures are retried (at most twice, identical request). Content-invalid responses are neither retried nor recoded. Each contrast is analysed on the commits valid in both of its conditions, and the invalid rate per condition is itself reported as an outcome. S5 bounds the results by scoring invalid responses as YES and as NO.
-6. **RQ3 (secondary, estimation):** ΔAUC versus C0 for C2 and C3 at 1,000, 2,000, and 8,000 tokens, with CIs. Pre-specified contrasts: C2@8k − C2@1k, C3@8k − C3@1k, and the change in the relevance gap, (C2−C3)@8k − (C2−C3)@1k. Cost-effectiveness: incremental USD per +0.01 AUC over C0.
-7. **SA1:** per-model estimates and CIs, plus sign consistency. Optionally, a mixed-effects logistic model: `correct ~ condition * model + (1|commit) + (1|project)`.
-8. **Pre-specified sensitivity analyses:**
+   - The power figures in §8 are planning approximations for the commit-level test, not guarantees; for project-level generalisation the MDE is roughly 2–3 times larger. Feasibility is judged with the pilot's actual variance.
+4. **Equivalence:** the SESOI must be justified and agreed with your supervisor before test inference. Proposed procedure: anchor $\delta$ to a difference the field treats as meaningful, measured on the *validation* split before any test call, for example the AUC gap between the size-only baseline (B1) and the 14-metric baseline (B2) (0.031 on validation [V, [../feasibility/split_analysis.py](../feasibility/split_analysis.py)]), and never below the noise floor (item 5). The 0.03 AUC used in §8 is a placeholder, not a justified value. TOST: equivalence holds only if the 90% CI lies within $\pm\delta$. A non-significant difference with a wider CI is reported as **inconclusive**, never as "no effect". Every contrast is reported as superior, inferior, equivalent, or inconclusive.
+5. **Noise floor:** repeat C0 and C2 for M1 on 200 commits with identical settings. Report the flip rate and the repeat ΔAUC distribution (Ouyang2025). Effects within this band are not interpreted.
+6. **Invalid outputs:** only transient API failures are retried (at most twice, identical request). Content-invalid responses are neither retried nor recoded. Each contrast is analysed on the commits valid in both of its conditions, and the invalid rate per condition is itself reported as an outcome. S5 bounds the results by scoring invalid responses as YES and as NO.
+7. **RQ3 (secondary, estimation):** ΔAUC versus C0 for C2 and C3 at 1,000, 2,000, and 8,000 tokens, with CIs. Pre-specified contrasts: C2@8k − C2@1k, C3@8k − C3@1k, and the change in the relevance gap, (C2−C3)@8k − (C2−C3)@1k. Cost-effectiveness: incremental USD per +0.01 AUC over C0.
+8. **SA1:** per-model estimates and CIs, plus sign consistency. Optionally, a mixed-effects logistic model: `correct ~ condition * model + (1|commit) + (1|project)`.
+9. **Pre-specified sensitivity analyses:**
    - S1: unweighted MCC on the sample.
    - S2: exclude formatting-only commits (empty `git diff -w --ignore-blank-lines`).
-   - S3: exclude instances with an empty pool.
+   - S3: exclude instances with an empty pool, and C2/C3 pairs whose C3 is flagged `line_limit` (§5.5).
    - S4: leave one project out.
    - S5: treat invalid outputs as defective vs clean.
    - S6: C3 seeds 1–2.
@@ -296,7 +297,7 @@ Exploratory: a logistic regression of the label on the LLM score plus log churn,
    - S9: C2−C1 on all eligible commits, including those whose C1 block is shorter than B.
    - S10: models with training cutoffs before vs after July 2025 (descriptive).
    - S11: every confirmatory contrast within project × period strata, and with commit age as a covariate (L15).
-9. **Exploratory EQ1:** interaction of condition with moderators, labelled as exploratory and not multiplicity-corrected.
+10. **Exploratory EQ1:** interaction of condition with moderators, labelled as exploratory and not multiplicity-corrected.
 
 ## 12. Cost model (RQ3; illustrative)
 

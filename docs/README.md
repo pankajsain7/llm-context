@@ -1,17 +1,17 @@
 # Research & Feasibility Phase: Overview and Proposal
 
 **Thesis:** *The Impact of Repository Context Selection on LLM-Based Just-in-Time Defect Prediction: An Empirical Study* (M.Sc. Professional Software Engineering, Reutlingen University)
-**Phase:** literature and dataset feasibility review (Phase 1), a critical self-review (Phase 2), responses to two external audits (Phase 3), and the tested context builder (Gate 2), all 2026-10-19. No LLM has been called. Changes are listed in the [external audit response](#external-audit-response), the [second audit response](#second-external-audit-response), and the [revision log](#revision-log).
+**Phase:** literature and dataset feasibility review (Phase 1), a critical self-review (Phase 2), responses to two external audits (Phase 3), and the tested context builder (Gate 2), all 2026-10-19; the third audit response, 2026-10-20. No LLM has been called. Changes are listed in the [external audit response](#external-audit-response), the [second audit response](#second-external-audit-response), the [third audit response](#third-external-audit-response), and the [revision log](#revision-log).
 
 ## Readiness
 
 | Item | Status |
 |---|---|
 | Research questions | Proposed (revision 3.1); to agree with your supervisor |
-| Dataset | JIT-Defect4J: Gate 1 evidence complete. Ni2022 read; reconstruction, dates, duplicates verified on all 27,319 commits; the split is time-ordered and class-stratified, which makes commit age predictive of the label (D28). Open: human second rater for the label audit, data permission, supervisor sign-off |
-| Context construction | `jitctx` package with C0–C3, tree-sitter C1, token-bounded BM25 windows, rendered-token accounting; unit tests and integration tests on real validation commits. Open: manual checks of enclosing ranges and side-by-side prompts |
+| Dataset | JIT-Defect4J: Gate 1 evidence complete. Ni2022 read; reconstruction, dates, duplicates verified on all 27,319 commits; the split is time-ordered and class-stratified, which makes commit age predictive of the label (D28). Open: per-commit AI rating and human second rater for the label audit, data permission, supervisor sign-off |
+| Context construction | `jitctx` package with C0–C3, tree-sitter C1, token-bounded BM25 windows, rendered-token accounting; unit tests and integration tests on real validation commits; enclosing ranges checked (0/40 errors), C2/C3 matching checked on every pair, relevance proxy C2 > C3; pilot sample frozen and contexts rebuilt deterministically. Open: human reading of side-by-side prompts, blinded relevance rating (Gate 3) |
 | LLM scoring | Specified (hosted APIs only), not validated; needs the engineering pilot (Gate 3) |
-| Statistical protocol | Draft; the equivalence margin is not yet justified |
+| Statistical protocol | Proposed: fixed-project inference with project-cluster CIs for generalisation (D14); the equivalence margin is not yet justified |
 | Evidence limits | JIT-LSM paper unread (closed access); JIT-Context known from its abstract only. All numbers are reproducible with the scripts, hashes, and outputs in [../feasibility/](../feasibility/) and [../src/jitctx/](../src/jitctx/) |
 
 ## Proposal (revision 3)
@@ -118,12 +118,25 @@ Review of the second external audit (2026-10-19), which checked an older archive
 | 4 | 129 passing tests do not establish correctness | Agree | The two defects above passed the old suite | Edge-case tests plus integration checks on real validation commits; still not a proof of methodological validity |
 | 5 | The open-weight, locally scored M1 contradicts the brief | Correct in substance; local hosting was already approval-only | The brief rules out heavy local models | Hosted cloud APIs only (user decision; D12); MCC fallback if no hosted M1 gives valid scores |
 | 6 | Stale 12,000-token cap and inconsistent contamination dates | Correct for two lines: the dataset recommendation still said "cap 12,000", and its trade-off list dated label exposure only to July 2025 (JIT-Defect-Extended), omitting the August 2022 JIT-Fine release that L10 and Risk 4 already named | — | Both lines corrected; superseded values marked as such |
-| 7 | Read Ni2022; audit 30 defective validation commits; clarify the split's effect on baselines | Agree; done except the human second rater | The paper describes a per-project 80/20 time split that "keeps the distribution"; the released split is class-stratified; commit age predicts validation labels (AUC 0.844); Kamei baseline AUC 0.792 vs 0.768 in the chronological window | [02-datasets.md](02-datasets.md) §2 items 5 and 10, §2a; L11, L15, S11; D28 |
+| 7 | Read Ni2022; audit 30 defective validation commits; clarify the split's effect on baselines | Agree; done except the human second rater | The paper describes a per-project 80/20 time split that "keeps the distribution"; the released split is class-stratified; commit age predicts validation labels (AUC 0.836); Kamei baseline AUC 0.792 vs 0.771 in the chronological window | [02-datasets.md](02-datasets.md) §2 items 5 and 10, §2a; L11, L15, S11; D28 |
 | 8 | Initialise Git | Already done before this audit (`github.com/pankajsain7/llm-context`) | — | `.gitignore` extended for data, labels, and outputs |
 | 9 | Implement C0–C3 with tree-sitter and BM25 | Agree | — | [../src/jitctx/](../src/jitctx/), [../tests/](../tests/) |
 | 10 | Prefer a project directory outside an employer-managed OneDrive | Partly: data, clones, and the environment are already outside OneDrive; the repository itself still sits in OneDrive | — | Left to the user; Git remote is the authoritative copy |
 
 **Found beyond the audit:** the released split is class-stratified (the main threat to absolute results and baselines); `tree-sitter` 0.26.0 crashes on Windows; Python's `splitlines()` disagrees with Git's line numbering on form feeds.
+
+## Third external audit response
+
+Review of the remaining issues of the third independent audit before the hosted-LLM pilot (2026-10-20). No LLM was called and no test label was used.
+
+| # | Audit point | Verdict | Evidence found | Action |
+|---|---|---|---|---|
+| 1 | Cross-split duplicate patches between supervised training and validation | Correct | 3 train–validation patch-id groups; 2 of the validation copies (gora) were eligible | Eligibility now excludes any commit whose patch occurs in an earlier split; unit test [../tests/test_manifest.py](../tests/test_manifest.py); manifest rebuilt (design §8 item 4) |
+| 2 | The AI-assisted label audit overstates what it shows | Correct | The forward search had five limits that can hide the labelling fix; per-commit ratings were not saved; the "≥ 17%" interval was an error rate built on unverified ratings. An exhaustive re-check of the four named contradictions supports one mechanically, two by issue date plus move detection, one on reading only | [02-datasets.md](02-datasets.md) §2a rewritten; no error rate; `label_audit.py --recheck`; D26 revised |
+| 3 | C2–C3 token matching must be verified for every status, with overlap | Correct; it passes, with one documented edge case | Pilot: 180 pairs, 0 violations, overlap mean 0.6% of C3's lines. 200 label-free validation commits: 1 of 600 pairs flagged `line_limit` (2.1% short; no snippet header fits the gap) | `jitctx summarize` checks every pair and reports overlap; unit test; handling of flagged pairs in design §5.5 and S3 |
+| 4 | Gate 2 manual checks are open | Correct; done by the AI assistant (human reading of prompts still open) | Tree-sitter 0/40 errors against the design rule; relevance proxy C2 0.73 vs C3 0.24; inspection found a licence-header defect in default-package files | Fixed with a test; [06-milestone-and-decisions.md](06-milestone-and-decisions.md) Gate 2 |
+| 5 | Project-aware statistics and the split interpretation | Correct | Cluster CIs about 2.6 × wider than commit-level CIs on validation; the split numbers had no script, and the within-project AUC 0.844 was not reproducible (now 0.836, defined) | Design §11 items 2–3 and D14; [../feasibility/split_analysis.py](../feasibility/split_analysis.py); observed vs inferred parts separated in [02-datasets.md](02-datasets.md) §2 item 10 |
+| 6 | The pilot sample, seeds, and contexts must be reproducible | Correct; two gaps | The pilot selection code was not in the repository; the context artifacts recorded a commit that did not contain the builder | Frozen list [../configs/pilot_commits.txt](../configs/pilot_commits.txt) with its selection rule; `code_revision` now marks uncommitted builds; contexts rebuilt twice from a commit and compared |
 
 ## Revision log
 

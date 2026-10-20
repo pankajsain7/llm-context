@@ -55,9 +55,19 @@ $repo = "$env:USERPROFILE\OneDrive - mhp-group.com\Desktop\LLM-Context"
 $env:PYTHONPATH = "$repo\src"
 .\.venv\Scripts\python.exe -m jitctx build-manifest --root . --out manifest.csv --labels-out labels_trainvalid.csv
 .\.venv\Scripts\python.exe -m pytest "$repo\tests" -q   # integration tests read manifest.csv and repos\
+
+# After the third external audit: split evidence and baselines (train/validation labels only), label-audit
+# re-check, Gate 2 checks, frozen pilot contexts
+.\.venv\Scripts\python.exe "$fs\split_analysis.py" --root .
+.\.venv\Scripts\python.exe "$fs\label_audit.py" --root . --recheck ant-ivy:297ac27a commons-vfs:20126201 commons-math:ca7a127a commons-math:dbcf7dd6
+.\.venv\Scripts\python.exe "$fs\gate2_checks.py" ranges --root . --n 40 --seed 7
+$ids = Get-Content "$repo\configs\pilot_commits.txt" | Where-Object { $_ -notmatch '^#' }
+.\.venv\Scripts\python.exe -m jitctx make-contexts --manifest manifest.csv --repos repos --commits $ids --extra-budgets 1000 8000 --with-prompts --out pilot_contexts.jsonl
+.\.venv\Scripts\python.exe -m jitctx summarize pilot_contexts.jsonl
+.\.venv\Scripts\python.exe "$fs\gate2_checks.py" relevance --contexts pilot_contexts.jsonl
 ```
 
-The scripts are [feasibility/verify_datasets.py](../feasibility/verify_datasets.py) (dataset statistics; its test-label figures are only printed with `--allow-test-labels`, which reproduces already-disclosed numbers), [feasibility/context_demo.py](../feasibility/context_demo.py) (a prototype of the C0 diff and the C2/C3 blocks, superseded by [../src/jitctx/](../src/jitctx/)), [feasibility/measure_inputs.py](../feasibility/measure_inputs.py) (Phase 2 sample measurements), [feasibility/audit_dataset.py](../feasibility/audit_dataset.py) (the all-project audit), [feasibility/label_audit.py](../feasibility/label_audit.py) (label-quality evidence for validation commits), and [feasibility/test_context_demo.py](../feasibility/test_context_demo.py) (131 tests). The `--defective-only` run reads validation labels; `measure_inputs.py` refuses test labels, and `audit_dataset.py` loads the test pickle but uses only its label-free columns.
+The scripts are [feasibility/verify_datasets.py](../feasibility/verify_datasets.py) (dataset statistics; its test-label figures are only printed with `--allow-test-labels`, which reproduces already-disclosed numbers), [feasibility/context_demo.py](../feasibility/context_demo.py) (a prototype of the C0 diff and the C2/C3 blocks, superseded by [../src/jitctx/](../src/jitctx/)), [feasibility/measure_inputs.py](../feasibility/measure_inputs.py) (Phase 2 sample measurements), [feasibility/audit_dataset.py](../feasibility/audit_dataset.py) (the all-project audit), [feasibility/label_audit.py](../feasibility/label_audit.py) (label-quality evidence for validation commits), [feasibility/split_analysis.py](../feasibility/split_analysis.py) (split construction, era signal, baselines, and bootstrap widths; test is label-blind), [feasibility/gate2_checks.py](../feasibility/gate2_checks.py) (tree-sitter vs `git diff -W`, relevance proxy; no labels), and [feasibility/test_context_demo.py](../feasibility/test_context_demo.py) (131 tests). The `--defective-only` run reads validation labels; `measure_inputs.py` refuses test labels, and `audit_dataset.py` loads the test pickle but uses only its label-free columns.
 
 ## 2. Example 1: a defective-labelled JIT-Defect4J commit
 
