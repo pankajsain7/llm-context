@@ -2,7 +2,7 @@ import re
 
 from jitctx import gitrepo
 from jitctx.diffparse import parse
-from jitctx.local import fill_local, local_files, render_local, runs
+from jitctx.local import fill_local, local_files, rank_lines, render_local, runs
 from jitctx.tokens import count_tokens
 
 BIG = "package p;\n\npublic class Big {\n" + "".join(
@@ -91,3 +91,15 @@ def test_small_pool_is_short(repo):
 
 def test_runs():
     assert runs({5, 1, 2, 3, 7}) == [(1, 3), (5, 5), (7, 7)]
+
+
+def test_recovered_parse_uses_nearest_lines_without_discarding_source(repo):
+    before = BIG.replace("return 0;", "return @;", 1)
+    (lf,) = setup(repo, before, before.replace("int v5 = 10 * 5;", "int v5 = 10 * 6;"))
+    assert lf.parser.status == "recovered_error" and not lf.enclosing
+    expected = sorted(lf.pool(), key=lambda n: (min(abs(n - m) for m in lf.masked), n))
+    assert rank_lines([lf]) == [(0, n) for n in expected]
+    res, sel = fill_local([lf], 400)
+    assert res.tokens <= 400 and sel
+    assert all(n not in lf.masked and lf.lines[n - 1] == text
+               for _, n, text in rendered_code_lines(render_local([lf], sel)))

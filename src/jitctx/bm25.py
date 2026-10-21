@@ -28,12 +28,14 @@ def bm25_scores(query: str, docs: list[str], k1: float = 1.2, b: float = 0.75) -
     lengths = [sum(tf.values()) for tf in tfs]
     avgdl = sum(lengths) / n or 1.0
     df = Counter(t for tf in tfs for t in tf)
+    # Hash-randomized set iteration can change floating-point sums, breaking score ties differently
+    # across Python processes. A fixed term order and accurate summation make ranking reproducible.
     q = set(terms(query))
     scores = []
     for tf, dl in zip(tfs, lengths):
-        s = 0.0
-        for t in q & tf.keys():
+        contributions = []
+        for t in sorted(q & tf.keys()):
             idf = math.log(1 + (n - df[t] + 0.5) / (df[t] + 0.5))
-            s += idf * tf[t] * (k1 + 1) / (tf[t] + k1 * (1 - b + b * dl / avgdl))
-        scores.append(s)
+            contributions.append(idf * tf[t] * (k1 + 1) / (tf[t] + k1 * (1 - b + b * dl / avgdl)))
+        scores.append(math.fsum(contributions))
     return scores

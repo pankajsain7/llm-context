@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from .diffparse import FileDiff, change_anchors, shown_old_lines
-from .java import enclosing_lines, first_code_line, split_lines
+from .java import EnclosingResult, enclosing_context, first_code_line, split_lines
 from .select import SLACK, FillResult
 from .tokens import count_tokens, line_tokens
 
@@ -19,6 +19,7 @@ class LocalFile:
     enclosing: set[int]
     first: int  # first line after the license header
     masked_runs: list[tuple[int, int]] = field(default_factory=list)
+    parser: EnclosingResult = field(default_factory=EnclosingResult)
 
     def pool(self) -> list[int]:
         return [n for n in range(self.first, len(self.lines) + 1) if n not in self.masked]
@@ -44,8 +45,9 @@ def local_files(files: list[FileDiff], blobs: dict[str, str]) -> list[LocalFile]
         lines = split_lines(text)
         masked = {n for n in shown_old_lines(f) if 1 <= n <= len(lines)}
         anchors = {n for n in change_anchors(f) if 1 <= n <= len(lines)}
-        enclosing = enclosing_lines(text, anchors) - masked
-        out.append(LocalFile(f.old_path, lines, masked, enclosing, first_code_line(lines), runs(masked)))
+        result = enclosing_context(text, anchors)
+        enclosing = result.lines - masked
+        out.append(LocalFile(f.old_path, lines, masked, enclosing, first_code_line(lines), runs(masked), result))
     return out
 
 

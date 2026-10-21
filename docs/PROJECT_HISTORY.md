@@ -2,7 +2,7 @@
 
 The current handoff: state, decisions with their reasons and status, lessons, and the next step. Working rules are in [../AGENTS.md](../AGENTS.md); methodology and evidence are in the linked documents. Link to them rather than copying them here.
 
-**Maintenance:** update this file in place at the end of a meaningful session. Replace outdated statements, delete anything no longer useful, and keep confirmed decisions separate from proposals. Do not append a diary. Last updated: 2026-10-20.
+**Maintenance:** update this file in place at the end of a meaningful session. Replace outdated statements, delete anything no longer useful, and keep confirmed decisions separate from proposals. Do not append a diary. Last updated: 2026-10-21.
 
 ## 1. Project
 
@@ -19,8 +19,8 @@ The goal is to explain which context helps, not to reach state-of-the-art accura
 
 - All working rules are in [../AGENTS.md](../AGENTS.md). The user cross-checks results with other AIs: verify each outside point, say where it is right or wrong, and fix what is wrong. Outside reviewers may work from an older archive; check the current files first.
 - **Test-split records and statistics were already seen.** No predictions were made. The authoritative list and the rules are in [02-datasets.md](02-datasets.md) §8 (four identified records, up to two unidentified, and a set of aggregate statistics). Never repeat the claim that test labels were "not read".
-- **The released split is class-stratified** (time-ordered, then defective commits moved to later splits). Commit age predicts the label (validation project-stratified AUC 0.836). See [02-datasets.md](02-datasets.md) §2 item 10, design L15, decision D28.
-- **Inference uses hosted cloud APIs only**; no local model hosting (user decision, 2026-10-19; D12).
+- **The released split has a verified age/label artifact** (validation project-stratified age AUC 0.836). Label redistribution is an inference; construction code is unavailable. No context contrast, including C2−C3, is immune. See datasets §2 item 10, design L15 and D28.
+- **Hosted inference only; no local hosting** (user decision, 2026-10-19). GPT-6 Luna/Copilot SDK is now the requested feasibility candidate; direct API access is not assumed. No backend is implemented or account-verified (D12).
 
 ## 3. How the design got here
 
@@ -30,9 +30,7 @@ The goal is to explain which context helps, not to reach state-of-the-art accura
 4. **Second external audit and Gate 2.** Test-exposure record corrected; two more filling defects fixed; Ni2022 read; the split's class stratification found; hosted-only models; the `jitctx` context builder implemented and tested ([README.md](README.md#second-external-audit-response)).
 5. **Third external audit (pre-pilot).** Cross-split duplicate rule, label-audit claims narrowed (no error rate), C2/C3 matching checked on every pair, Gate 2 checks done by the AI assistant, statistics finalized as a proposal, split numbers scripted, pilot inputs frozen and rebuilt deterministically ([README.md](README.md#third-external-audit-response)).
 
-**Positions taken on audit disagreements** (proposals; reopen only with new evidence or supervisor input):
-- C2−C1 stays a confirmatory test, framed as a comparison of two strategies.
-- The budget series stays as RQ3, because the brief makes context quantity part of the main variable.
+**Current priority (user-requested, 2026-10-20):** C2−C3 is the sole primary contrast. Other core comparisons are secondary estimates; budget/model extensions are optional scope. This supersedes the earlier proposal to retain four confirmatory tests. The updated methodology remains subject to Prof. Höll's approval, not retroactive approval of earlier AI decisions.
 
 ## 4. Key decisions and why
 
@@ -40,19 +38,19 @@ Full list: [06-milestone-and-decisions.md](06-milestone-and-decisions.md) §2. *
 
 | Topic | Proposal | Why | Status |
 |---|---|---|---|
-| Dataset | JIT-Defect4J, with code rebuilt from Apache Git | Commit-level unit, parent hashes, small Java repositories, standard benchmark | Gate 1 evidence complete; awaiting second rater, data permission, supervisor sign-off (D1) |
+| Dataset | Retain JIT-Defect4J and four conditions (user constraint); scientific acceptance remains conditional | Historical reconstruction works; labels/split remain limited | Human audit, permission and supervisor acceptance open |
 | Inference target | Eligible Java changes of the test split; the label is an observed SZZ proxy | Labels are noisy (Example 1) | Proposed |
 | Input scope | Java files except `package-info.java` | Matches the benchmark's change definition; not proof about the labels | Proposed (D7) |
 | No commit messages | Excluded from every prompt | The brief defines C0 as diff only; issue keys are a memorization cue | Proposed (D6) |
 | Fixed prompts, no agents | One non-agentic prompt per condition | Isolates *what* context helps; JIT-LSM mixes context with agent search | Working rule ([../AGENTS.md](../AGENTS.md)) |
-| Volume control | C3 random, matched to C2's tokens | Separates relevance from extra length | Proposed (D10) |
+| Volume control | C2 versus token-matched C3 is primary | Operational selection-policy contrast; not isolated semantic relevance | User-requested priority; protocol approval pending |
 | Budget | B = 2,000 (alternative 1,000); series 1,000 / 2,000 / 8,000 | Same-file fill measured at about 73% (2,000) and 84% (1,000) | **Pending approval** (D9, D11) |
 | Diff size limit | 16,000 tokens | Keeps 85–87% of defective commits; fits a 32K-token window | **Pending approval** (D4) |
 | Sample | All ≈ 400 eligible defective commits plus 2 × clean, proportional by project (N ≈ 1,200) | Positives are scarce (8.7%) | Proposed (D5) |
 | Primary metric | ROC-AUC if two-candidate scoring is validated, else MCC | Threshold-free and prevalence-free, but only if both answer likelihoods are measurable | Proposed; conditional on Gate 3 (D13) |
-| Statistics | Holm over C1−C0, C2−C0, C2−C1, C2−C3 (DeLong); the 21 projects as fixed strata; project-cluster CI required for claims beyond them; TOST with a justified margin | Multiplicity; cluster CIs about 2.6 × wider on validation; interpretable null results | Proposed; margin unjustified (D14, D24) |
-| Models | Hosted cloud APIs only; M1 with exact two-candidate scoring, M2 from another family | Exact scoring, reproducibility; the brief rules out local models | **User decision** on hosting; model choice proposed (D12) |
-| Era confound | Keep the split and sample; within-era analyses and a pilot era-sensitivity check | Commit age predicts labels because of the split construction | Proposed (D28) |
+| Statistics | Paired project-bootstrap intervals for primary C2−C3; other contrasts estimation-only; required project×training-era sensitivity | Fixed-project terminology does not remove dependence; old raw-score-correlation MDEs withdrawn | Proposed D14/D28; Prof. Höll approval pending |
+| Models | One primary hosted model; assess GPT-6 Luna/Copilot SDK before provider implementation | Isolated SDK/runtime protocol verified; access user-confirmed, further SDK account/model/quota checks deferred to execution setup; session isolation/telemetry unverified, no likelihood surface found | D12/D13 pending; no direct API assumption |
+| Era confound | Retain released split only for qualified SZZ-benchmark target; required supported-cell/coverage reporting | Age AUC 0.836; true chronological Kamei refit 0.752, old 0.771 only a filtered window | Proposed D28 |
 | Displayed test records | Exclude from the confirmatory sample | Conservative; no predictions were made | Proposed (D27) |
 
 ## 5. Lessons from corrected mistakes
@@ -64,7 +62,7 @@ Full list: [06-milestone-and-decisions.md](06-milestone-and-decisions.md) §2. *
 5. **Don't infer the label scope from the metric scope.** The line counts show how the benchmark defines a change, not what its labels depend on.
 6. **State data exposure exactly.** "Test labels were not read" was true for one script, not for the project. Keep one exposure record and add to it.
 7. **Test edge cases, not only typical inputs.** A greedy fill that stopped at one oversized line passed 129 tests.
-8. **Look for the mechanism behind an anomaly.** The "non-chronological split" turned out to be class stratification, with a large effect on time-dependent features.
+8. **Separate observation from mechanism.** Label/era associations are observed; class redistribution explains them plausibly, but the split code is unavailable and the exact construction remains inferred.
 9. **Pin native libraries that crash.** `tree-sitter` 0.26.0 caused access violations on Windows; 0.24.0 works.
 10. **Save the code behind every [V] number, and per-item ratings.** The split numbers, the pilot selection, and the label-audit ratings had no saved code or record; one number (0.844) could not be reproduced and was withdrawn.
 11. **A count of unverified judgements is not an error rate.** The label audit's "≥ 17%" mixed AI ratings with an incomplete search; report checkable cases and unresolved ones instead.
@@ -72,19 +70,23 @@ Full list: [06-milestone-and-decisions.md](06-milestone-and-decisions.md) §2. *
 
 ## 6. Current state and next steps
 
-**State.** Research review and feasibility done. Gate 1 evidence is complete apart from a recorded per-commit AI rating plus a human second rater for the label audit, and data permission; the label-free manifest is rebuilt with the earlier-split duplicate rule (SHA-256 `9f487f7e…80af`). Gate 2: the `jitctx` builder is implemented and tested (178 tests incl. integration on real validation commits); the AI assistant checked the enclosing ranges (0/40 errors), C2/C3 token matching on every pair (pilot 0/180 violations; label-free 1/600 flagged `line_limit`, now handled in design §5.5), and relevance (proxy C2 0.73 vs C3 0.24; 8 of 12 inspected top windows clearly relevant) and fixed a licence-header defect. The pilot sample is frozen in `configs/pilot_commits.txt` and its contexts rebuild identically from commit `f8b1fbb`. The statistics plan (D14) is a finalized proposal. The design is a proposal at revision 3.1. No LLM has been called. All 2026-10-20 changes are committed locally; nothing is pushed.
+**Implemented (2026-10-20).** Sorted-term `math.fsum` BM25; explicit parser ERROR/MISSING/exception diagnostics with deterministic nearest-line fallback; cross-file `package-info.java` exclusion; manifest cap/tokenizer metadata and fail-closed config/token checks. Chronology diagnostics refuse the test pickle and perform a real author-time/SHA repartition with training-only refits. Existing feasibility scripts now generate reproducible blank human audit packets and refuse overwriting ratings. No provider or project dependency added; the SDK is isolated outside the thesis environment.
 
-**Go/no-go for the hosted pilot (2026-10-20):** go for Gate 3 step 1 only (the ~20-request scoring check on validation prompts, after the user confirms model and cost); the remaining risks are listed in [06-milestone-and-decisions.md](06-milestone-and-decisions.md) Gate 3 ("Readiness for step 1").
+**Observed inputs/checks.** Train+validation manifest regenerated: 21,839 rows, eligible 15,694/5,296, SHA-256 `87da666f…3a21`; exact input-pickle access guard, no test file. Frozen 60 validation IDs persisted in two fresh hash-seed 1/31 builds: 240 records each, identical except build time; normalized prompt digest `62665b48…924f`, 0/60 match violations, max prompt 14,873 reference tokens, 164 clean parses. All 60 saved cases pass candidate/parent, exact-prompt, parent-source, masking and budget checks with evaluation-file access blocked. **348 tests pass** (203 current, 145 feasibility); Ruff and diff checks pass. Full hashes, source identity, commands and scratch verification scripts/reports: [04-feasibility-demo.md](04-feasibility-demo.md) §7. Revised 420-call schedule totals 1,574,501 canonical input reference tokens, not provider usage/cost. Earlier chronology refit remains 0.752/0.591/0.767 (Kamei/history/size). No model requests, paid inference, pilot or new test-data access occurred.
+
+**Protocol/human work.** Revision **3.2 proposal** remains unapproved: sole primary C2−C3, paired project uncertainty, required project/time sensitivity and bounded audits. Scratch `pre_inference_human_audits\label` contains original 30 and independent 10 evidence packets; `relevance\rater1` and `rater2` contain 20 blinded cases. Integrity/seed checks pass (242 output hashes, 111 candidate/linked Java patches); **all ratings are blank**, no human results invented. Keep `relevance\coordinator_only` private. Lock blinded relevance ratings before showing identified C0–C3 prompts to the same people, or assign a separate technical reviewer. SZZ uncertainty, temporal artifacts and project dependence remain; equivalence requires an approved substantive margin.
+
+**Inference status.** Isolated scratch `copilot_preflight`: published Python SDK **1.0.22**, wheel-pinned runtime **1.0.98**, protocol **3** verified in normal and isolated empty modes. Downloader rename failed; the same checksum-verified archive was extracted into isolated `runtime`, then used by explicit path. Historical auth probes reported false; model-list/quota calls returned `Not authenticated`. **The user subsequently confirmed Copilot access and asked to defer this issue; do not request login again in this phase.** SDK authentication/model/quota checks are deferred to execution setup, not marked independently verified. Existing global CLI 1.0.36 is unchanged. No sessions/model requests created. Exact Luna ID/reasoning choices, usage limits/cost and effective session controls/telemetry remain unverified. No temperature/top-p/seed/logprobs surface found. Binary MCC and alias/default-setting limitations need supervisor acceptance. Evidence is in Gate 3.
+
+**Go/no-go:** **NO-GO for the 20-request capability check at present:** human prerequisites and explicit capped run/cost authorization remain open. Access is user-confirmed; outstanding SDK metadata checks are deferred to execution setup. SDK metadata support is not effective-session proof; that is the capability check's purpose. Do not implement a provider solely from signatures. Confirmatory approval remains Gate 4, before test inference.
 
 **Next actions, in order:**
 
-1. User: confirm M1 and the cost of the scoring check. Recommended for the scoring feasibility test: OpenAI `gpt-4.1-mini-2025-04-14` (pinned snapshot, non-reasoning, knowledge cutoff 2024-06-01, 1M-token window, $0.40 per 1M input tokens, model page checked 2026-10-20). The Responses API documents `top_logprobs` (up to 20 alternatives per token); that this model returns both YES and NO among them is **not verified** and is exactly what the check tests. Cost: about 20 prompts × 3K tokens ≈ $0.03; the whole pilot (≈ 2.0M input tokens) ≈ $0.80. Then run Gate 3 step 1 and fix the scoring method before the 420-call pilot. If it fails, `gpt-4o-mini` remains the M2 candidate, so M1 would move to another provider with log-probabilities.
-2. Supervisor meeting: D14 (fixed-project inference), D27, D28, D9 budget, D4 cap, D24 margin, and sign-off of Gate 1.
-3. Label audit: record one AI rating per commit in `thesis-scratch\label_audit\ratings.csv`, then a human second rater on 10, blind ([02-datasets.md](02-datasets.md) §2a); email the JIT-Fine authors (D18), asking for the BIC-to-fix mapping and the split code.
-4. Gate 2 remainder: a human reads side-by-side C0–C3 prompts for 20 validation commits (`python -m jitctx make-contexts --with-prompts`); the blinded two-rater relevance audit is Gate 3 step 2.
-5. Gate 4: freeze the protocol with the supervisor before any test-split run.
-
-**Other open items for the supervisor:** read the JIT-LSM paper through the library (D19).
+1. Distribute only participant audit folders: label primary30 to one rater, independent10 to an independent human; relevance rater1/rater2 to independent raters (at least one human). Retain original submissions and adjudicate separately. No AI may fill human ratings. After blinded ratings are locked, have a human review the same 20 identified C0–C3 prompts using the coordinator key and saved JSONL. Record issues without tuning against prediction results.
+2. Defer SDK authentication/account metadata checks until execution setup, following the user's instruction. At that stage verify exact Luna ID/reasoning choices, quota and applicable pricing/overage cap with metadata only, preserving historical failed-auth evidence. Do not reopen the sign-in request during current audit preparation.
+3. Use the regenerated manifest and inputs already verified; no further rebuild is needed unless code/config changes. Legacy `manifest.csv` is rejected and remains historical. Later-fix evidence is evaluation-only and never enters inference.
+4. Prof. Höll: approve D12/D13 access/metric limits, D14 primary/uncertainty, D28 temporal scope, D4/D5/D9 cap/sample/budget, D26 label limitations, D27 displayed-record exclusion, and D24 only if equivalence is claimed. D18 permission and D19 full JIT-LSM reading remain open.
+5. Obtain user approval for the capped capability check (~20 requests), then verify runtime behavior before implementing/testing one backend. The 420-call validation engineering pilot requires separate run/cost authorization. No test inference before Gate 4.
 
 ## 7. Practical notes
 
@@ -92,16 +94,16 @@ Full list: [06-milestone-and-decisions.md](06-milestone-and-decisions.md) §2. *
   - Git is not on PATH; use `C:\Program Files\Git\cmd\git.exe`.
   - Python virtual environment: `C:\Users\psain\thesis-scratch\.venv`, pinned by [../requirements.txt](../requirements.txt) (`uv` is not installed).
   - Repository: `github.com/pankajsain7/llm-context` (`main`). Push rules: [../.github/copilot-instructions.md](../.github/copilot-instructions.md).
-- **Scratch folder:** `repos/` (21 clones), `jitfine/` (dataset), `jitext/` (JIT-LSM and JIT-Defect-Extended files, which contain labels), `apachejit/`, `papers/` (Ni2022 PDF and text), `manifest.csv` (label-free; `manifest_v1_77cad9be.csv` superseded), `labels_trainvalid.csv`, `label_audit/` (validation label evidence), `pilot_contexts.jsonl` (`pilot_contexts_v1_97883fd.jsonl` superseded), `valid200_contexts.jsonl` (label-free status check), `gate2_ranges.txt`. It is rebuilt with [04-feasibility-demo.md](04-feasibility-demo.md) §1.
+- **Scratch folder:** current `manifest_trainvalid.csv`, `pilot_contexts_hash1.jsonl`/`hash31.jsonl`, access/provenance reports, `pre_inference_validation.json`, `pre_inference_recheck.json`, `human_audit_validation.json`, `pre_inference_human_audits/`, `copilot_preflight/`; exact evidence/commands in feasibility §7. Existing `repos/` (21 clones), `jitfine/`, `jitext/` (label-bearing), `apachejit/`, `papers/`, `labels_trainvalid.csv`, `label_audit/`, legacy `manifest.csv` and old pilot/valid200/range artifacts remain. Do not overwrite historical evidence or submitted ratings.
 - **Commands** (set `$env:PYTHONPATH` to the repository's `src`):
-  - Manifest: `python -m jitctx build-manifest --root C:\Users\psain\thesis-scratch --out ...\manifest.csv --labels-out ...\labels_trainvalid.csv`.
-  - Contexts: `python -m jitctx make-contexts --manifest ...\manifest.csv --repos ...\repos --sample 20 --with-prompts --out ...\contexts.jsonl`, then `python -m jitctx summarize ...\contexts.jsonl`.
+  - Manifest: `python -m jitctx build-manifest --root C:\Users\psain\thesis-scratch --splits train valid --config configs/contexts.toml --out ...\manifest_trainvalid.csv`. Do not add test to the pre-pilot rebuild.
+  - Contexts: `python -m jitctx make-contexts --manifest ...\manifest_trainvalid.csv --repos ...\repos --sample 20 --with-prompts --out ...\contexts.jsonl`, then `python -m jitctx summarize ...\contexts.jsonl`.
   - Tests: `python -m pytest` in the repository (integration tests need the manifest and clones; `-m "not integration"` skips them); prototype tests: `python -m pytest feasibility -q -p no:cacheprovider`.
-  - Audit: `python feasibility/audit_dataset.py --root C:\Users\psain\thesis-scratch` (about 6 minutes).
-  - Pilot contexts: `make-contexts ... --commits (Get-Content configs\pilot_commits.txt | Where-Object { $_ -notmatch '^#' }) --extra-budgets 1000 8000 --with-prompts`; compare runs by `prompt_sha256`.
+  - Historical full audit (not a routine pre-pilot check): `python feasibility/audit_dataset.py --root ...`; it deserializes test data, so do not rerun under the current no-new-test-access constraint.
+  - Pilot input regeneration and normalized hash comparison: feasibility §7. Extra budgets are optional scope, not a required engineering-pilot rebuild.
   - Split evidence and baselines: `python feasibility/split_analysis.py --root ...`; Gate 2 checks: `python feasibility/gate2_checks.py ranges|relevance ...`; label re-check: `python feasibility/label_audit.py --root ... --recheck project:sha`. All commands: [04-feasibility-demo.md](04-feasibility-demo.md) §1.
   - The manifest rebuild takes about 30 minutes.
-  - Afterwards, delete `__pycache__` folders.
+  - Use `-B`/`PYTHONDONTWRITEBYTECODE=1` and no pytest/Ruff cache; do not generate throwaway artifacts.
 - **Pitfalls:**
   - Agent terminals may drop a leading `Set-Location`; use absolute paths.
   - Set `PYTHONIOENCODING=utf-8` when printing PDF text.
@@ -118,7 +120,7 @@ Full list: [06-milestone-and-decisions.md](06-milestone-and-decisions.md) §2. *
 | Current proposal, readiness, audit verdicts, revision log | [README.md](README.md) |
 | Literature and the novelty matrix | [01-literature-review.md](01-literature-review.md) §9 |
 | Dataset evidence, audit results, split and duplicate findings | [02-datasets.md](02-datasets.md) |
-| Full experimental specification (revision 3.1) | [03-experimental-design.md](03-experimental-design.md) |
+| Full experimental specification (revision 3.2 proposal) | [03-experimental-design.md](03-experimental-design.md) |
 | Real examples, measurements, hashes, reproduction commands | [04-feasibility-demo.md](04-feasibility-demo.md) |
 | Ranked risks | [05-risks.md](05-risks.md) |
 | Gates, tooling, decisions D1–D28 | [06-milestone-and-decisions.md](06-milestone-and-decisions.md) |

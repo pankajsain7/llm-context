@@ -1,5 +1,8 @@
-"""Evidence for the split interpretation (docs/02-datasets.md section 2 item 10). Train/validation labels only; test is
-label-blind. Prototype measurement aid; no LLM.
+"""Split diagnostics and genuine chronological baseline refits, using train/validation only.
+
+Never opens the test pickle (even selecting metadata from a pickle loads its labels).
+The original-validation window is a diagnostic subset, not a chronological refit.
+Prototype measurement aid; no LLM.
 
   python feasibility/split_analysis.py --root <scratch>
 """
@@ -13,14 +16,41 @@ import pandas as pd
 
 
 def load(root: Path, split: str) -> pd.DataFrame:
-    with warnings.catch_warnings(), open(root / "jitfine/data/data/jitfine" / f"features_{split}.pkl", "rb") as f:
-        warnings.simplefilter("ignore")
-        d = pickle.load(f)
+    d = _features(root, split)
     out = pd.DataFrame({"project": d.project, "commit": d.commit_hash, "split": split,
                         "t": pd.to_numeric(d.author_date_unix_timestamp).astype(int)})
-    if split != "test":
-        out["y"] = d.is_buggy_commit.astype(int).values
+    out["y"] = d.is_buggy_commit.astype(int).values
     return out
+
+
+def chronological_train_valid(d: pd.DataFrame) -> pd.DataFrame:
+    """Repartition train+valid within project by author time then SHA, preserving split sizes.
+
+    Assignment depends only on identity/time and original per-project validation
+    counts, never on labels. Test records are rejected before any assignment.
+    """
+    if not set(d.split).issubset({"train", "valid"}):
+        raise ValueError("Only train and valid records are permitted")
+    if d.duplicated(["project", "commit"]).any():
+        raise ValueError("Duplicate project/commit identity")
+    out = d.sort_values(["project", "t", "commit"]).copy()
+    n_valid = out[out.split == "valid"].groupby("project").size()
+    n_train = out.groupby("project").size() - n_valid.reindex(out.project.unique(), fill_value=0)
+    out["strict_tv"] = (out.groupby("project").cumcount() >= out.project.map(n_train)).map(
+        {True: "valid", False: "train"})
+    return out
+
+
+def chronological_features(raw: dict[str, pd.DataFrame], tv: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Apply metadata assignments to original feature rows using project AND commit identity."""
+    combined = pd.concat([raw[s] for s in ("train", "valid")], ignore_index=True)
+    if combined.duplicated(["project", "commit_hash"]).any():
+        raise ValueError("Duplicate feature project/commit identity")
+    keys = pd.MultiIndex.from_arrays([combined.project, combined.commit_hash])
+    assignment = tv.set_index(["project", "commit"]).strict_tv.reindex(keys)
+    if assignment.isna().any() or len(tv) != len(combined):
+        raise ValueError("Chronological metadata and feature identities do not match")
+    return {s: combined[assignment.to_numpy() == s].reset_index(drop=True) for s in ("train", "valid")}
 
 
 def auc(score: pd.Series, y: pd.Series) -> float:
@@ -37,22 +67,13 @@ def main():
     ap.add_argument("--perms", type=int, default=2000)
     ap.add_argument("--boot", type=int, default=1000)
     a = ap.parse_args()
-    d = pd.concat([load(a.root, s) for s in ("train", "valid", "test")], ignore_index=True)
+    if a.perms < 1 or a.boot < 1:
+        ap.error("--perms and --boot must both be positive")
+    d = pd.concat([load(a.root, s) for s in ("train", "valid")], ignore_index=True)
+    print("Data access: train and validation features/labels only; test pickle not opened.")
 
-    # 1. Position under a strict per-project 60/20/20 time split (rank by author time, then commit id)
-    d = d.sort_values(["project", "t", "commit"])
-    d["pos"] = d.groupby("project").cumcount() / d.groupby("project").commit.transform("size")
-    d["strict"] = pd.cut(d.pos, [-1, 0.6, 0.8, 2], labels=["train", "valid", "test"], right=False).astype(str)
-    print(f"in the strict 60/20/20 position: {(d.split == d.strict).mean():.3f} of all commits; test vs the rest "
-          f"in the strict 80/20 position: {((d.pos >= 0.8) == (d.split == 'test')).mean():.3f}")
-    test = d[d.split == "test"]
-
-    # 2. Train + validation: which commits are out of time order, and their labels
-    tv = d[d.split != "test"].copy()
-    n_valid = tv[tv.split == "valid"].groupby("project").size()
-    tv["rank_tv"] = tv.groupby("project").cumcount()
-    tv["strict_tv"] = (tv.rank_tv >= tv.project.map(tv.groupby("project").size() - n_valid)).map(
-        {True: "valid", False: "train"})
+    # 1. Train + validation: which commits are out of time order, and their labels
+    tv = chronological_train_valid(d)
     into_valid = tv[(tv.split == "valid") & (tv.strict_tv == "train")]
     into_train = tv[(tv.split == "train") & (tv.strict_tv == "valid")]
     print(f"train+valid out of order: {len(into_valid) + len(into_train)}; moved into valid {len(into_valid)} "
@@ -62,7 +83,7 @@ def main():
     print(f"validation period's own commits: {len(own)}, defect rate {own.y.mean():.3f}; defective validation "
           f"commits taken from the training period: {int(into_valid.y.sum())} of {int(v.y.sum())}")
 
-    # 3. Per-project defect rates of train vs valid, against random splits of the same sizes
+    # 2. Per-project defect rates of train vs valid, against random splits of the same sizes
     def gap(frame):
         r = frame.groupby(["project", "split"]).y.mean().unstack()
         return (r.train - r.valid).abs().mean()
@@ -86,36 +107,43 @@ def main():
     print(f"mean |train - valid| per-project defect rate: observed {observed * 100:.2f} pp; random splits median "
           f"{perm_gaps[len(perm_gaps) // 2] * 100:.2f} pp; random splits at least as close: {closer} of {a.perms}")
 
-    # 4. Commit age predicts the validation label (older = higher score)
+    # 3. Commit age predicts the validation label (older = higher score)
     within = [(1 - auc(g.t.rank(), g.y), g.y.sum()) for _, g in v.groupby("project") if 0 < g.y.sum() < len(g)]
     print(f"validation, commit age as the score: pooled AUC {auc(-v.t, v.y):.3f}; project-stratified AUC "
           f"(within-project AUCs weighted by defective count, design section 10) "
           f"{sum(x * n for x, n in within) / sum(n for _, n in within):.3f}; unweighted mean "
           f"{sum(x for x, _ in within) / len(within):.3f} over {len(within)} projects")
 
-    # 5. Test, label-blind
-    last_valid = d[d.split == "valid"].groupby("project").t.max()
-    last_train = d[d.split == "train"].groupby("project").t.max()
-    print(f"test commits before their project's 80th time percentile: {(test.pos < 0.8).sum()}; older than the "
-          f"project's newest validation commit: {(test.t < test.project.map(last_valid)).sum()}; older than the newest "
-          f"train commit: {(test.t < test.project.map(last_train)).sum()}")
-
-    # 6. Supervised baselines trained on train, scored on validation: all, and the chronological window (validation
+    # 4. Supervised baselines trained on train, scored on validation: all, and the chronological window (validation
     #    commits in their strict time position, i.e. not moved there from the training period)
     raw = {s: _features(a.root, s) for s in ("train", "valid")}
     y_tr = raw["train"].is_buggy_commit.astype(int).values
     y_va = raw["valid"].is_buggy_commit.astype(int).reset_index(drop=True)
-    window = raw["valid"].commit_hash.isin(set(own.commit)).values
+    window = pd.MultiIndex.from_arrays([raw["valid"].project, raw["valid"].commit_hash]).isin(
+        pd.MultiIndex.from_frame(own[["project", "commit"]]))
     scores = {}
     for name, cols in (("Kamei 14", KAMEI), ("history/experience", ["ndev", "age", "nuc", "exp", "rexp", "sexp"]),
                        ("size, log(la+ld+1) (B1)", None)):
         score = pd.Series(_logit(_x(raw["train"], cols), y_tr)(_x(raw["valid"], cols)))
         scores[name] = score
-        print(f"LR {name}: validation AUC {auc(score, y_va):.3f}; chronological window "
+        print(f"LR {name}: original validation AUC {auc(score, y_va):.3f}; original-validation window ONLY "
               f"{auc(score[window].reset_index(drop=True), y_va[window].reset_index(drop=True)):.3f} "
               f"(n={int(window.sum())}, defective {int(y_va[window].sum())})")
 
-    # 7. How much project clustering widens the CI of a paired ΔAUC (design section 11): Kamei 14 minus B1 on validation
+    # 5. Actual chronological refit; original split sizes preserved within each project.
+    chronological = chronological_features(raw, tv)
+    ctr, cva = chronological["train"], chronological["valid"]
+    cy_tr = ctr.is_buggy_commit.astype(int).values
+    cy_va = cva.is_buggy_commit.astype(int).reset_index(drop=True)
+    print(f"Chronological train+validation repartition: train n={len(ctr)}, defective={int(cy_tr.sum())}; "
+          f"valid n={len(cva)}, defective={int(cy_va.sum())}; author-time/SHA order within each project.")
+    for name, cols in (("Kamei 14", KAMEI), ("history/experience", ["ndev", "age", "nuc", "exp", "rexp", "sexp"]),
+                       ("size, log(la+ld+1) (B1)", None)):
+        # New fit and training-only standardisation; no original-split weights are reused.
+        score = pd.Series(_logit(_x(ctr, cols), cy_tr)(_x(cva, cols)))
+        print(f"LR {name}: true chronological REFIT validation AUC {auc(score, cy_va):.3f}")
+
+    # 6. Project-clustering diagnostic: paired Kamei-minus-B1 AUC on ORIGINAL validation.
     s1, s0 = scores["Kamei 14"], scores["size, log(la+ld+1) (B1)"]
     proj = raw["valid"].project.reset_index(drop=True)
     delta = auc(s1, y_va) - auc(s0, y_va)
@@ -139,6 +167,8 @@ KAMEI = ["la", "ld", "nf", "ns", "nd", "entropy", "ndev", "lt", "nuc", "age", "e
 
 
 def _features(root: Path, split: str) -> pd.DataFrame:
+    if split not in {"train", "valid"}:
+        raise ValueError("Only train and valid feature pickles are permitted")
     with warnings.catch_warnings(), open(root / "jitfine/data/data/jitfine" / f"features_{split}.pkl", "rb") as f:
         warnings.simplefilter("ignore")
         return pickle.load(f)

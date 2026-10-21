@@ -32,8 +32,9 @@ def touched_paths(repo: Path, parent: str, sha: str) -> set[str]:
 
 
 def java_files(repo: Path, rev: str) -> list[str]:
+    """Candidate source paths with the same package-info exclusion as the C0 diff."""
     out = decode(git(repo, "ls-tree", "-r", "--name-only", "-z", rev))
-    return sorted(p for p in out.split("\0") if p.endswith(".java"))
+    return sorted(p for p in out.split("\0") if p.endswith(".java") and not p.endswith("package-info.java"))
 
 
 def read_blobs(repo: Path, rev: str, paths: list[str]) -> dict[str, str]:

@@ -1,29 +1,30 @@
 # Research & Feasibility Phase: Overview and Proposal
 
 **Thesis:** *The Impact of Repository Context Selection on LLM-Based Just-in-Time Defect Prediction: An Empirical Study* (M.Sc. Professional Software Engineering, Reutlingen University)
-**Phase:** literature and dataset feasibility review (Phase 1), a critical self-review (Phase 2), responses to two external audits (Phase 3), and the tested context builder (Gate 2), all 2026-10-19; the third audit response, 2026-10-20. No LLM has been called. Changes are listed in the [external audit response](#external-audit-response), the [second audit response](#second-external-audit-response), the [third audit response](#third-external-audit-response), and the [revision log](#revision-log).
+**Phase:** pre-inference validation, 2026-10-20. Train/validation inputs are regenerated and verified, blank human audit packets are ready, and the isolated Copilot SDK/runtime handshake passes. Copilot access is user-confirmed; SDK authentication/account checks are deferred to execution setup. Human reviews and explicit capped cost/run authorization remain open: **NO-GO for the 20-request capability check at present**. No LLM has been called. Design **3.2 is a proposal**: C2−C3 is the sole primary contrast; project/time sensitivity and project-aware uncertainty replace the previous four-test primary family. Prof. Höll's approval remains open. Earlier audit responses below are historical. Current evidence: [04-feasibility-demo.md](04-feasibility-demo.md) §7; access and next steps: [06-milestone-and-decisions.md](06-milestone-and-decisions.md) Gate 3.
 
 ## Readiness
 
 | Item | Status |
 |---|---|
-| Research questions | Proposed (revision 3.1); to agree with your supervisor |
-| Dataset | JIT-Defect4J: Gate 1 evidence complete. Ni2022 read; reconstruction, dates, duplicates verified on all 27,319 commits; the split is time-ordered and class-stratified, which makes commit age predictive of the label (D28). Open: per-commit AI rating and human second rater for the label audit, data permission, supervisor sign-off |
-| Context construction | `jitctx` package with C0–C3, tree-sitter C1, token-bounded BM25 windows, rendered-token accounting; unit tests and integration tests on real validation commits; enclosing ranges checked (0/40 errors), C2/C3 matching checked on every pair, relevance proxy C2 > C3; pilot sample frozen and contexts rebuilt deterministically. Open: human reading of side-by-side prompts, blinded relevance rating (Gate 3) |
-| LLM scoring | Specified (hosted APIs only), not validated; needs the engineering pilot (Gate 3) |
-| Statistical protocol | Proposed: fixed-project inference with project-cluster CIs for generalisation (D14); the equivalence margin is not yet justified |
-| Evidence limits | JIT-LSM paper unread (closed access); JIT-Context known from its abstract only. All numbers are reproducible with the scripts, hashes, and outputs in [../feasibility/](../feasibility/) and [../src/jitctx/](../src/jitctx/) |
+| Research questions | Revision 3.2 proposal; C2−C3 primary, other core contrasts secondary estimates |
+| Dataset | JIT-Defect4J retained provisionally; historical reconstruction complete, SZZ-label truth unverified, age artifact reproduced. Bounded human audit, permission and supervisor acceptance remain open |
+| Context construction | **348 combined tests pass**. Train/validation metadata-bearing manifest rebuilt; two persisted builds of the fixed 60 validation IDs agree on all fields except build time: 240 prompts, 0/60 match violations, 164 clean parses. Parent-source/masking checks pass for all 60. Human prompt/relevance audits remain open |
+| Human audit preparation | Original 30 label cases plus seeded independent 10; blinded 20-commit relevance packets for two raters; integrity verified, all ratings blank. Lock blinded ratings before identified prompt review |
+| Inference | Isolated SDK 1.0.22/runtime 1.0.98, protocol 3 verified with zero sessions/model calls. Access user-confirmed; SDK auth/model/quota checks deferred to execution setup. Effective session isolation unverified. No provider implemented; binary MCC route needs approval; no direct API assumption |
+| Statistical protocol | Sole primary C2−C3; paired project-bootstrap uncertainty, required project×era sensitivity, secondary estimation only. Old score-correlation MDEs withdrawn; practical equivalence margin unresolved |
+| Evidence limits | Human audits unfinished; JIT-LSM full paper unread, JIT-Context abstract only. Historical measurements are distinguished from newly reproduced checks |
 
-## Proposal (revision 3)
+## Proposal (revision 3.2)
 
 ### What to investigate
 
-Which code context, if any, improves zero-shot LLM prediction of defect-inducing commits, and why. Prior work already adds context in other ways: JIT-LSM gives an *agent* same-file code, LLM4Reg gives a multi-stage pipeline cross-file code and varies its amount, PROPER-SDP adds project-evolution text, and JIT-Context learns structural context with a GNN ([01-literature-review.md](01-literature-review.md) §9). None compares sources at an equal budget or controls volume with random code. The thesis does that, with one fixed, non-agentic prompt per condition:
+Estimate the effect of fixed context-selection policies on prediction against historical SZZ-derived labels. Prior work adds context: JIT-LSM uses agentic same-file acquisition, LLM4Reg cross-file context and quantity variation, PROPER-SDP evolutionary text, and JIT-Context structural representations ([01-literature-review.md](01-literature-review.md) §9). The targeted review did not establish an equivalent fixed-prompt BM25/random volume-matched comparison; it does not support a universal "first" claim.
 
 | Question | Contrast (primary model M1) |
 |---|---|
-| **RQ1 Effectiveness and strategy.** Does same-file (C1) or cross-file context (C2) help over the diff alone (C0)? Does the BM25 cross-file strategy beat the proximity same-file strategy at the same budget? | C1−C0, C2−C0; C2−C1 as a strategy comparison on commits whose same-file pool fills the budget |
-| **RQ2 Relevance.** Is BM25-selected cross-file code better than random cross-file code of the same size? | C2−C3, with a manipulation check |
+| **RQ1 Effectiveness and strategy (secondary).** How do same-file and BM25 cross-file strategies compare with the diff and one another? | C1−C0, C2−C0; C2−C1 on the C1-fill subset, estimation only |
+| **RQ2 Selection policy at matched volume (primary).** How does BM25 differ from random cross-file selection? | Sole primary C2−C3; bounded relevance audit, no claim of isolated semantic relevance |
 | **RQ3 Quantity and cost.** How do performance, tokens, cost, and latency change at 1,000 / 2,000 / 8,000 tokens of cross-file code? | Estimation |
 | **SA1 Models** (secondary). Do the effects hold for an independent second model? | Sign consistency |
 
@@ -34,7 +35,7 @@ Negative, inconclusive, and equivalence results are planned outcomes, not failur
 **JIT-Defect4J** (Ni2022): labels, splits, and commit IDs, with all code reconstructed from the original Apache Git repositories at the parent commit.
 
 - All 27,319 commits exist with their recorded parent, and Git reproduces the benchmark's churn for 99.98% once the input scope matches the benchmark's (Java files except `package-info.java`) [V].
-- The split is per project, time-ordered, and then class-stratified: defective commits were moved from earlier periods into later splits to equalise defect rates, so 159 test commits are older than their project's newest train commit and commit age predicts the label [V/P]. This matters for trained baselines and, through era cues, for absolute LLM performance (L15, D28).
+- The released split has a directly measured age/label artifact (validation age-only within-project AUC 0.836); label-based redistribution is an inference, not a verified construction algorithm. This threatens all context contrasts, including C2−C3 (L15, D28).
 - Inference target: eligible Java changes of the test split, with the SZZ-derived benchmark label as an observed proxy.
 - **JIT-Defect-Extended** (released with JIT-LSM) is a subset of JIT-Defect4J with identical labels, embedded in every record and folder name [V]. It is used only for cross-checks, never as prompt input.
 - Fallback: ApacheJIT (2010–2017, Hadoop merged or excluded). Details: [02-datasets.md](02-datasets.md).
@@ -45,9 +46,9 @@ Negative, inconclusive, and equivalence results are planned outcomes, not failur
 |---|---|
 | Conditions | C0 Java diff · C1 + same-file code (lines already in the diff masked) · C2 + BM25 cross-file windows · C3 + random cross-file windows matched to C2's rendered tokens. Shared budget 2,000 tokens for C1–C3 (alternative 1,000); series 1,000 / 8,000 for C2 and C3; windows bounded by lines *and* tokens |
 | Sample | Test split; label-blind eligibility (diff ≤ 16,000 tokens); all ≈ 400 eligible defective commits plus 2 × clean, proportional by project (N ≈ 1,200) |
-| Models | M1 with exact two-candidate scoring, M2 an independent second model, M3 optional; all through hosted cloud APIs, no local hosting |
+| Models | One primary hosted model; assess GPT-6 Luna/Copilot SDK before implementation. No direct API access assumed; additional models optional |
 | Metrics | Primary ROC-AUC if the pilot validates the scores (else MCC, fixed before any test call); MCC, within-project AUC, calibration, cost, tokens, latency |
-| Statistics | Holm over four contrasts (DeLong), commit-level and project-cluster bootstrap CIs, TOST with a *justified* SESOI, noise floor |
+| Statistics | One primary paired C2−C3 project-bootstrap interval; other contrasts estimation-only, required within-project/era and leave-one-project-out checks; equivalence only with an approved practical margin |
 | Baselines | Trivial; size-only and Kamei logistic regression; JITLine re-run (time-boxed); published results for context |
 | First step | Gates 1–3: dataset acceptance, a tested context builder, a 60-commit engineering pilot ([06-milestone-and-decisions.md](06-milestone-and-decisions.md)) |
 
@@ -55,9 +56,9 @@ Full specification: [03-experimental-design.md](03-experimental-design.md).
 
 ### Why this is academically rigorous
 
-- **One factor per contrast.** Every condition shows the identical diff; only the context block differs, and C1–C3 share one budget counted on the rendered text.
-- **Volume is controlled** by a token-matched random block from the same pool. C2−C0 = (C2−C3) + (C3−C0) is read as an accounting identity, not as a causal decomposition.
-- **The manipulation is checked** with a blinded human rating and a pre-specified fallback retriever before any test-split run.
+- **Specified policy contrast.** Every condition shows the identical diff. C2/C3 share a pool and matched volume; C2/C1 also changes source/ranking/chunking and is a strategy comparison.
+- **Volume is controlled approximately** by a token-matched random block from the same pool, with residual errors logged. The contrast accounting identity holds only on identical commits/weights and is not a causal decomposition.
+- **Relevance is checked** with bounded blinded ratings. The lexical proxy does not prove semantic usefulness; a failed audit narrows claims or requires an approved revision, not automatic retriever replacement.
 - **Leakage controls:** parent-snapshot code only, label-blind eligibility, no messages or metadata, a documented input scope, and a locked, pre-registered test split.
 - **Measurement is validated before use:** the scoring method must pass the pilot, and invalid responses are never recoded.
 - **Null results are interpretable** through equivalence tests with a defended margin and a measured noise floor.
@@ -66,13 +67,13 @@ Full specification: [03-experimental-design.md](03-experimental-design.md).
 ### Why it is feasible
 
 - About 1,200 commits, deterministic Git plumbing, and BM25 in about a second per commit [V].
-- About 69M input tokens for M1 and 21M per further model: roughly $14–$686 for M1, depending on the price per million tokens [I].
+- Core reference-token envelope about 20.6M; 69M includes optional extensions. Copilot account access, usage and actual cost remain unverified; no paid run is authorized by these estimates.
 - Every expensive step sits behind a gate with explicit pass criteria.
 
 ### Open issues for your supervisor
 
 1. **Read the JIT-LSM paper** through the library (closed access); it fixes how the thesis is positioned (D19).
-2. **Equivalence margin and power.** The planning MDE is about 0.03–0.04 AUC (larger for C2−C1). Agree on a justified SESOI (D24).
+2. **Primary comparison, uncertainty and metric.** Approve revised D14/D28 and an AUC or binary-MCC route (D13); old MDEs are withdrawn. A substantive equivalence margin remains open (D24).
 3. **Budget and cap.** B = 2,000 vs 1,000 (D9) and the 16,000-token cap (D4).
 4. **Data permission** for JIT-Defect4J, which has no license file (D18).
 5. **Label noise** remains the top validity risk; the label-quality audit (D26) is the next concrete step.

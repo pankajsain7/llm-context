@@ -26,6 +26,19 @@ class Config:
     bm25_b: float = 0.75
     seed: int = 0
     diff_cap: int = 16000
+    tokenizer: str = TOKENIZER
+
+    def __post_init__(self):
+        if self.tokenizer != TOKENIZER:
+            raise ValueError(f"unsupported tokenizer {self.tokenizer!r}; builder uses {TOKENIZER!r}")
+        if self.diff_cap <= 0 or self.budget <= 0 or any(b <= 0 for b in self.extra_budgets):
+            raise ValueError("diff_cap and context budgets must be positive")
+        if len({self.budget, *self.extra_budgets}) != 1 + len(self.extra_budgets):
+            raise ValueError("context budgets must be distinct")
+        if min(self.window_lines, self.window_stride, self.window_max_tokens) <= 0:
+            raise ValueError("window limits must be positive")
+        if not 0 <= self.tolerance < 1 or not 0 <= self.bm25_b <= 1 or self.bm25_k1 <= 0:
+            raise ValueError("invalid tolerance or BM25 parameters")
 
     def digest(self) -> str:
         return hashlib.sha256(repr(sorted(asdict(self).items())).encode()).hexdigest()[:16]
@@ -54,6 +67,8 @@ def build_commit(repo: Path, sha: str, parent: str, cfg: Config, with_prompts: b
     diff = gitrepo.java_diff(repo, parent, sha)
     files = parse(diff)
     t_c0 = count_tokens(diff)
+    if t_c0 > cfg.diff_cap:
+        raise ValueError(f"C0 diff exceeds configured cap: {t_c0} > {cfg.diff_cap} tokens")
     blocks: dict[str, tuple[str, dict]] = {"C0": ("", {"status": "none", "target_tokens": 0})}
 
     old_paths = [f.old_path for f in files if f.old_path]
@@ -63,6 +78,9 @@ def build_commit(repo: Path, sha: str, parent: str, cfg: Config, with_prompts: b
         "status": res1.status, "target_tokens": cfg.budget, "n_truncated": 0, "n_skipped_size": res1.n_skipped_size,
         "pool": {"files": len(local), "lines": sum(len(f.pool()) for f in local),
                  "enclosing_lines": sum(len(f.enclosing) for f in local)},
+        "parser": [{"path": f.path, "status": f.parser.status, "error_nodes": f.parser.error_nodes,
+                    "missing_nodes": f.parser.missing_nodes, "error": f.parser.error,
+                    "fallback": "nearest_unmasked_lines" if f.parser.status != "ok" else None} for f in local],
         "sources": [{"path": local[i].path, "runs": runs(s)} for i, s in selected.items()]})
 
     touched = gitrepo.touched_paths(repo, parent, sha)
@@ -102,7 +120,8 @@ def build_commit(repo: Path, sha: str, parent: str, cfg: Config, with_prompts: b
         rec = {"commit": sha, "parent": parent, "condition": cond, "budget": cfg.budget if cond != "C0" else 0,
                "context_tokens": count_tokens(block), "t_c0": t_c0, "diff_over_cap": t_c0 > cfg.diff_cap,
                "prompt_tokens": count_tokens(text), "prompt_sha256": sha256(text), "context_sha256": sha256(block),
-               "prompt_version": PROMPT_VERSION, "tokenizer": TOKENIZER, "config": cfg.digest(),
+               "prompt_version": PROMPT_VERSION, "tokenizer": TOKENIZER, "diff_cap": cfg.diff_cap,
+               "config": cfg.digest(),
                "build_seconds": seconds, **meta}
         if "@" in cond:
             rec["budget"] = int(cond.split("@")[1])

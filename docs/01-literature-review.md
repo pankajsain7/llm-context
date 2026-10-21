@@ -91,7 +91,7 @@ Status: research phase, 2026-10-19; **revised after the Phase 2 critical review*
 - **Non-determinism.** Ouyang2025: temperature 0 "does not guarantee determinism" [V, AB].
 - **Memorization.** Ramos2025 found memorization evidence for widely used bug benchmarks such as Defects4J, which varies by model [V, AB]. Our candidate datasets come from public Apache repositories from 2001–2019, so the same risk applies.
 - **Verbalized confidence.** Xiong2024: LLMs are overconfident when they verbalize confidence [V, AB]. Self-reported confidence should therefore not be treated as a calibrated probability. Prefer token log-probabilities where the API exposes them.
-- **Metrics and tests.** For imbalanced defect data, MCC is recommended (Yao2020, Chicco2020) [BK]. Paired classifier comparisons can use McNemar's test (Dietterich1998) and DeLong's test for correlated AUCs (DeLong1988). Equivalence testing (Lakens2017) is needed to *support* a claim of no meaningful effect [BK].
+- **Metrics and tests.** MCC is recommended for imbalanced defect data (Yao2020, Chicco2020) [BK]. DeLong/McNemar address paired predictions but do not automatically handle project clustering; Obuchowski1997 establishes the need for clustered ROC methods [A]. The proposed project-bootstrap analysis and conditional metric choice are specified in design §§10–11. Equivalence requires a justified practical margin; non-significance alone is not equivalence.
 
 ## 9. Synthesis: what is known, what is not, and how this thesis differs
 
@@ -118,9 +118,9 @@ Status: research phase, 2026-10-19; **revised after the Phase 2 critical review*
 
 **Questions the prior work leaves open** (the thesis's claimed contribution):
 
-1. Does relevance-ranked repository code help more than the same amount of randomly chosen code from the same snapshot? None of the works above has a volume-matched random control.
+1. **Primary:** how does the fixed BM25 policy differ from random selection from the same snapshot at approximately matched volume? The inspected work did not establish this exact control; full JIT-LSM reading remains open. The estimand is a policy effect against historical SZZ labels, not semantic relevance or defect understanding in isolation.
 2. How do same-file and cross-file strategies compare at an equal token budget? JIT-LSM uses only same-file code and LLM4Reg only cross-file code, and neither fixes the amount of text.
-3. How does performance change with the amount of repository code on a standard commit-level benchmark, and at what cost? LLM4Reg's k-series suggests an inverted U, but inside a multi-stage pipeline, for regression bugs only, and without a random control.
+3. **Optional secondary scope:** how does performance change with the amount of repository code and at what cost? LLM4Reg already varies quantity, so this is not a standalone novelty claim; the controlled random comparison is the central contribution. Current prioritization is in design revision 3.2, pending Prof. Höll's approval.
 
 **Claims the thesis will not make:** that context augmentation for LLM-based JIT-DP is new (JIT-LSM, PROPER-SDP); that cross-file context for LLM detection of bug-inducing changes is new (LLM4Reg); or state-of-the-art accuracy (JIT-Context reports beating LLMs on this benchmark). Leakage controls and multi-model checks are methodological qualities, not novelty claims.
 

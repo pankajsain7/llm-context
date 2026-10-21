@@ -32,10 +32,24 @@ def read_manifest(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def validate_manifest(rows: list[dict], cfg: Config) -> None:
+    """Fail closed when eligibility was built under a different cap or token accounting policy."""
+    for row in rows:
+        if not row.get("diff_cap") or not row.get("tokenizer"):
+            raise ValueError("manifest lacks diff_cap/tokenizer metadata; rebuild it with build-manifest")
+        if int(row["diff_cap"]) != cfg.diff_cap or row["tokenizer"] != cfg.tokenizer:
+            raise ValueError("manifest/config diff_cap or tokenizer mismatch; rebuild with the intended config")
+        if row.get("eligible") == "True":
+            tokens = float(row["t_c0"])
+            if not 0 <= tokens <= cfg.diff_cap:
+                raise ValueError("manifest marks an over-cap or invalid-sized diff eligible")
+
+
 def cmd_build_manifest(a):
     from .manifest import build  # the only code path that opens the benchmark files
 
-    manifest, labels = build(a.root, tuple(a.splits), a.cap, log=lambda s: print(s, file=sys.stderr))
+    cfg = load_config(a.config, diff_cap=a.cap)
+    manifest, labels = build(a.root, tuple(a.splits), cfg.diff_cap, log=lambda s: print(s, file=sys.stderr))
     manifest.to_csv(a.out, index=False)
     print(f"manifest: {len(manifest)} commits -> {a.out}")
     if a.labels_out:
@@ -48,9 +62,14 @@ def cmd_build_manifest(a):
 def cmd_make_contexts(a):
     cfg = load_config(a.config, budget=a.budget, seed=a.seed,
                       extra_budgets=tuple(a.extra_budgets) if a.extra_budgets else None)
-    rows = [r for r in read_manifest(a.manifest) if r["split"] == a.split and r["eligible"] == "True"]
     if a.split == "test" and not a.allow_test:
         raise SystemExit("test-split contexts are locked until the protocol freeze (Gate 4)")
+    rows = read_manifest(a.manifest)
+    try:
+        validate_manifest(rows, cfg)
+    except (KeyError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+    rows = [r for r in rows if r["split"] == a.split and r["eligible"] == "True"]
     if a.commits:
         wanted = set(a.commits)
         rows = [r for r in rows if r["commit"] in wanted]
@@ -61,6 +80,8 @@ def cmd_make_contexts(a):
         for k, r in enumerate(rows, 1):
             try:
                 records = build_commit(a.repos / r["project"], r["commit"], r["parent"], cfg, a.with_prompts)
+                if records[0]["t_c0"] != float(r["t_c0"]):
+                    raise ValueError("rebuilt C0 token count disagrees with manifest; rebuild and inspect inputs")
             except (subprocess.CalledProcessError, OSError, ValueError) as e:  # recorded, never silently skipped
                 records = [{"commit": r["commit"], "condition": "ALL", "status": "error",
                             "error": f"{type(e).__name__}: {e}"[:300]}]
@@ -123,15 +144,16 @@ def main(argv=None):
     sub = ap.add_subparsers(required=True)
     p = sub.add_parser("build-manifest", help="label-free manifest with eligibility flags")
     p.add_argument("--root", type=Path, required=True, help="scratch folder with jitfine/ and repos/")
-    p.add_argument("--splits", nargs="+", default=["train", "valid", "test"])
-    p.add_argument("--cap", type=int, default=16000)
+    p.add_argument("--splits", nargs="+", choices=["train", "valid", "test"], default=["train", "valid", "test"])
+    p.add_argument("--config", type=Path, default=REPO_ROOT / "configs" / "contexts.toml")
+    p.add_argument("--cap", type=int, help="override the config diff_cap when building eligibility")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--labels-out", type=Path, help="train/valid labels; never contains test labels")
     p.set_defaults(func=cmd_build_manifest)
     p = sub.add_parser("make-contexts", help="C0-C3 records for manifest commits (JSONL)")
     p.add_argument("--manifest", type=Path, required=True)
     p.add_argument("--repos", type=Path, required=True)
-    p.add_argument("--split", default="valid")
+    p.add_argument("--split", choices=["train", "valid", "test"], default="valid")
     p.add_argument("--allow-test", action="store_true", help="only after the Gate 4 freeze")
     p.add_argument("--commits", nargs="*")
     p.add_argument("--sample", type=int)

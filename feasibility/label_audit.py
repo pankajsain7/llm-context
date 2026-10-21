@@ -19,9 +19,12 @@ Never use on the test split.
 """
 import argparse
 import csv
+import hashlib
 import json
 import pickle
+import random
 import re
+import shutil
 import subprocess
 import urllib.request
 import warnings
@@ -32,6 +35,98 @@ JAVA = ["--", "*.java", ":(exclude)*package-info.java"]
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 KEY = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
 MASS_CHANGE = 30  # later commits touching more files are skipped
+SEARCH_LIMITS = ("Existing forward search: at most 400 later commits, 5 links, 30 files per later commit; "
+                 "history before 2020; plain blame; no following later renames; only candidate-added files. "
+                 "No fresh search or issue fetch in packet preparation. Missing evidence is not a false label.")
+
+
+def write_csv(path, rows, fields):
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
+        w.writeheader()
+        w.writerows(rows)
+
+
+def prepare_human(root, manifest, out):
+    """Keep the original 30 IDs/evidence, add blank independent rating sheets; no pickle or network access."""
+    source = root / "label_audit"
+    with (source / "audit.csv").open(encoding="utf-8-sig", newline="") as f:
+        cases = sorted(csv.DictReader(f), key=lambda x: (x["bic"], x["project"]))
+    if len(cases) != 30 or len({(r["project"], r["bic"]) for r in cases}) != 30:
+        raise ValueError("Expected the original 30 unique label-audit cases; do not resample")
+    with manifest.open(encoding="utf-8-sig", newline="") as f:
+        valid = {(r["project"], r["commit"]) for r in csv.DictReader(f) if r["split"] == "valid"}
+    if any((r["project"], r["bic"]) not in valid for r in cases):
+        raise ValueError("Every existing label-audit ID must be a validation commit")
+    evidence = [source / f"{r['project']}_{r['bic'][:10]}.md" for r in cases]
+    if not all(p.is_file() for p in evidence):
+        raise ValueError("Missing original evidence; do not silently replace cases")
+    verdict_heading = re.compile(r"(?im)^\s*(?:#{1,6}\s*)?(?:rating|verdict|classification|prior AI|AI.assisted rating)\b")
+    if any(verdict_heading.search(p.read_text(encoding="utf-8")) for p in evidence):
+        raise ValueError("Original evidence contains rating/verdict headings; sanitize separately before blinding")
+    if out.exists():
+        raise FileExistsError(f"Refusing to overwrite packet or ratings: {out}")
+    # Select before any rating is supplied; sorted SHA then project, seed fixed by the protocol.
+    second = set(random.Random(2027).sample(range(30), 10))
+    out.mkdir(parents=True)
+    instructions = ("# Independent validation label-evidence review\n\n"
+        "EVALUATION ONLY. This packet contains later fixes and issue information. Never supply it to "
+        "retrieval, prompts, or model execution. No human ratings have been filled in.\n\n"
+        "Review at most 20 minutes per case. Rate P: the candidate wrote code a later bug fix corrects; "
+        "F: the fix touches code the candidate only reformatted/moved/refactored; T: the linked bug was "
+        "reported before the candidate; N: no bug fix among the available links; U: unclear. If several "
+        "categories apply, choose the best-supported one and explain overlap. These are evidence judgements, "
+        "not replacement benchmark labels. Record exact paths/lines, fix/issue references and uncertainty.\n\n"
+        + SEARCH_LIMITS + " Existing evidence may contain abbreviated patches; complete local Java patches "
+        "for the candidate and already-linked commits are supplied. No additional links were searched.\n\n"
+        "Work independently. Do not see another rater's sheet, prior AI verdicts, model outputs or aggregate "
+        "rating counts. Record rater_id, role (human/AI), UTC completion time and elapsed minutes. The "
+        "independent10 packet must be rated by a human. Keep submitted sheets immutable; adjudicate "
+        "separately afterward. Do not infer an overall label-error rate from this audit.\n")
+    fields = ["case_id", "project", "candidate", "parent", "evidence_dir", "linked_fixes", "issue_keys",
+              "search_limits", "rater_id", "rater_role", "category", "supporting_paths_lines",
+              "supporting_fix_issue_refs", "rationale", "uncertainty", "minutes", "completed_utc"]
+    sheets = {"primary30": [], "independent10": []}
+    for name in sheets:
+        (out / name).mkdir()
+        (out / name / "README.md").write_bytes(instructions.encode("utf-8"))
+    for i, (case, original) in enumerate(zip(cases, evidence)):
+        case_id, repo = f"L{i + 1:02d}", root / "repos" / case["project"]
+        parent = git(repo, "rev-parse", f"{case['bic']}^").strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", parent):
+            raise ValueError("Candidate parent is not a full SHA")
+        text = original.read_text(encoding="utf-8")
+        links = list(dict.fromkeys(re.findall(r"^## Linked later commit ([0-9a-f]{40})", text, re.MULTILINE)))
+        row = dict.fromkeys(fields, "")
+        row.update(case_id=case_id, project=case["project"], candidate=case["bic"], parent=parent,
+                   evidence_dir=case_id, linked_fixes=";".join(links), issue_keys=case.get("keys", ""),
+                   search_limits=SEARCH_LIMITS)
+        dest = out / "primary30" / case_id
+        dest.mkdir()
+        shutil.copyfile(original, dest / "existing_evidence.md")
+        (dest / "candidate.diff").write_bytes(git(repo, "diff", "-U3", parent, case["bic"], *JAVA).encode("utf-8"))
+        for sha in links:
+            (dest / f"linked_{sha}.diff").write_bytes(
+                git(repo, "diff", "-U3", f"{sha}^", sha, *JAVA).encode("utf-8"))
+        sheets["primary30"].append(row)
+        if i in second:
+            shutil.copytree(dest, out / "independent10" / case_id)
+            sheets["independent10"].append(row.copy())
+    for name, rows in sheets.items():
+        write_csv(out / name / "ratings.csv", rows, fields)
+    provenance = {
+        "purpose": "evaluation_only_human_audit_preparation_no_ratings",
+        "selection": "existing30 sorted candidate SHA then project; independent10 Random(2027).sample",
+        "historical_ratings": "Only historical aggregate AI ratings existed; no per-case ratings reconstructed.",
+        "source_audit_sha256": hashlib.sha256((source / "audit.csv").read_bytes()).hexdigest(),
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "generator_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "original_evidence_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in evidence},
+        "files_sha256": {p.relative_to(out).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                         for p in sorted(out.rglob("*")) if p.is_file()},
+    }
+    (out / "provenance.json").write_bytes((json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+    print(f"Prepared 30 primary and 10 independent blank label ratings: {out}")
 
 
 def git(repo, *args, check=True):
@@ -87,7 +182,7 @@ def linked_commits(repo, bic, max_scan=400, max_links=5):
                     continue
                 a, b = h["old"][0][0], h["old"][-1][0]
                 blame = git(repo, "blame", "--porcelain", "-L", f"{a},{b}", f"{c}^", "--", h["old_path"], check=False)
-                for m in re.finditer(r"^([0-9a-f]{40}) (\d+) (\d+)", blame, re.M):
+                for m in re.finditer(r"^([0-9a-f]{40}) (\d+) (\d+)", blame, re.MULTILINE):
                     if m[1] == bic:
                         hit.append({"path": h["old_path"], "line": int(m[2]), "fix_new": [t for _, t in h["new"]]})
         if hit:
@@ -148,7 +243,15 @@ def main():
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--jira", action="store_true")
     ap.add_argument("--recheck", nargs="+", metavar="PROJECT:SHA", help="exhaustive re-check of single candidates")
+    ap.add_argument("--prepare-human", type=Path, metavar="NEW_OUTPUT_DIR",
+                    help="prepare existing30/independent10 human packets; no new search, labels or network")
+    ap.add_argument("--manifest", type=Path, help="train/validation manifest verifying existing audit IDs")
     args = ap.parse_args()
+    if args.prepare_human:
+        if not args.manifest:
+            ap.error("--prepare-human requires --manifest")
+        prepare_human(args.root, args.manifest, args.prepare_human)
+        return
     if args.recheck:
         for item in args.recheck:
             project, sha = item.split(":")
@@ -195,9 +298,8 @@ def main():
             for link in links:
                 f.write(f"\n## Linked later commit {link['commit']} ({pd.Timestamp(link['time'], unit='s').date()})\n"
                         f"{link['subject']}\nKeys: {link['keys']}\n")
-                for x in link["lines"][:15]:
-                    f.write(f"- BIC line {x['path']}:{x['line']} `{added.get(x['path'], {}).get(x['line'], '?').strip()}`"
-                            f" -> replaced by {[t.strip() for t in x['fix_new'][:4]]}\n")
+                f.writelines(f"- BIC line {x['path']}:{x['line']} `{added.get(x['path'], {}).get(x['line'], '?').strip()}`"
+                            f" -> replaced by {[t.strip() for t in x['fix_new'][:4]]}\n" for x in link["lines"][:15])
             for k, v in issues.items():
                 f.write(f"\nJira {k}: {v}\n")
         print(f"{r.project} {r.commit_hash[:10]} links={len(links)} keys={rows[-1]['keys']} "

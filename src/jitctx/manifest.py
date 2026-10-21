@@ -11,7 +11,7 @@ import pandas as pd
 
 from . import gitrepo
 from .diffparse import parse
-from .tokens import count_tokens
+from .tokens import TOKENIZER, count_tokens
 
 # Test records displayed with (or next to) their labels during feasibility work; list and caveats in
 # docs/02-datasets.md §8. Excluding them is proposal D27.
@@ -82,6 +82,8 @@ def audit_commits(repo: Path, df: pd.DataFrame) -> list[dict]:
 
 
 def build(root: Path, splits=("train", "valid", "test"), cap: int = 16000, log=print):
+    if cap <= 0:
+        raise ValueError("diff cap must be positive")
     metas, labels = [], []
     for split in splits:
         meta, lab = load_split(root, split)
@@ -97,6 +99,10 @@ def build(root: Path, splits=("train", "valid", "test"), cap: int = 16000, log=p
     m["recon_ok"] = m.exists & m.parent_ok.fillna(False).astype(bool) & m.numstat_ok.fillna(False).astype(bool)
     m["has_java_change"] = m.n_java_files.fillna(0) > 0
     m["within_cap"] = m.t_c0.fillna(cap + 1) <= cap
+    # Repeated columns survive CSV copying and identify the eligibility/token-count policy. The
+    # consumer must reject legacy or mismatched metadata rather than silently use stale eligibility.
+    m["diff_cap"] = cap
+    m["tokenizer"] = TOKENIZER
     m = flag_duplicates(m.sort_values(["author_time", "commit"]).reset_index(drop=True))
     m["inspected_test_record"] = m.commit.isin(INSPECTED_TEST_COMMITS)
     m["eligible"] = m.recon_ok & m.has_java_change & m.within_cap & m.dup_keep & ~m.dup_earlier_split

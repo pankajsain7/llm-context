@@ -1,6 +1,8 @@
 import pandas as pd
 
+from jitctx import manifest
 from jitctx.manifest import flag_duplicates
+from jitctx.tokens import TOKENIZER
 
 
 def test_duplicate_flags_follow_split_order():
@@ -15,3 +17,20 @@ def test_duplicate_flags_follow_split_order():
     assert list(f.index[~f.dup_keep]) == ["v4"]  # within-split duplicate: the later one goes
     assert f.loc["v1"].dup_other_split and f.loc["v2"].dup_other_split and not f.loc["v5"].dup_other_split
     assert f.loc["n1"].dup_group_size == 1 and f.loc["v3"].dup_group_size == 2
+
+
+def test_manifest_records_actual_eligibility_cap_and_tokenizer(tmp_path, monkeypatch):
+    def load(_, split):
+        return pd.DataFrame([{"project": "synthetic", "commit": "abc", "ds_parent": "parent",
+                              "split": split, "la": 1, "ld": 1, "author_time": 1}]), None
+
+    def audit(_, df):
+        return [{"commit": row.commit, "exists": True, "parent": "parent", "parent_ok": True,
+                 "numstat_ok": True, "n_java_files": 1, "t_c0": 301, "patch_id": "patch"}
+                for row in df.itertuples()]
+
+    monkeypatch.setattr(manifest, "load_split", load)
+    monkeypatch.setattr(manifest, "audit_commits", audit)
+    result, labels = manifest.build(tmp_path, splits=("valid",), cap=300, log=lambda _: None)
+    assert result.iloc[0].diff_cap == 300 and result.iloc[0].tokenizer == TOKENIZER
+    assert not result.iloc[0].within_cap and not result.iloc[0].eligible and labels.empty

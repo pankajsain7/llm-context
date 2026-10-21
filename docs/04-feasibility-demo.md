@@ -67,7 +67,7 @@ $ids = Get-Content "$repo\configs\pilot_commits.txt" | Where-Object { $_ -notmat
 .\.venv\Scripts\python.exe "$fs\gate2_checks.py" relevance --contexts pilot_contexts.jsonl
 ```
 
-The scripts are [feasibility/verify_datasets.py](../feasibility/verify_datasets.py) (dataset statistics; its test-label figures are only printed with `--allow-test-labels`, which reproduces already-disclosed numbers), [feasibility/context_demo.py](../feasibility/context_demo.py) (a prototype of the C0 diff and the C2/C3 blocks, superseded by [../src/jitctx/](../src/jitctx/)), [feasibility/measure_inputs.py](../feasibility/measure_inputs.py) (Phase 2 sample measurements), [feasibility/audit_dataset.py](../feasibility/audit_dataset.py) (the all-project audit), [feasibility/label_audit.py](../feasibility/label_audit.py) (label-quality evidence for validation commits), [feasibility/split_analysis.py](../feasibility/split_analysis.py) (split construction, era signal, baselines, and bootstrap widths; test is label-blind), [feasibility/gate2_checks.py](../feasibility/gate2_checks.py) (tree-sitter vs `git diff -W`, relevance proxy; no labels), and [feasibility/test_context_demo.py](../feasibility/test_context_demo.py) (131 tests). The `--defective-only` run reads validation labels; `measure_inputs.py` refuses test labels, and `audit_dataset.py` loads the test pickle but uses only its label-free columns.
+The scripts are [feasibility/verify_datasets.py](../feasibility/verify_datasets.py) (dataset statistics; its explicit test-label option reproduces already-disclosed numbers and is not part of pre-pilot checks), [feasibility/context_demo.py](../feasibility/context_demo.py) (prototype, superseded by `src/jitctx`), [feasibility/measure_inputs.py](../feasibility/measure_inputs.py), [feasibility/audit_dataset.py](../feasibility/audit_dataset.py), [feasibility/label_audit.py](../feasibility/label_audit.py), [feasibility/split_analysis.py](../feasibility/split_analysis.py) (**now train+validation only**, refusing the test pickle; original-window diagnostic and true chronological refit are separate), and [feasibility/gate2_checks.py](../feasibility/gate2_checks.py). The historical audit loaded test pickles for metadata, which still deserializes their labels; this session did not repeat it. Current checks/reproduction commands are in §7.
 
 ## 2. Example 1: a defective-labelled JIT-Defect4J commit
 
@@ -274,4 +274,90 @@ Both files from `JIT_LSM/LargeModel/data/` were downloaded and joined with JIT-D
 **Not demonstrated:**
 
 - Any LLM prediction. No model was called.
-- The masked same-file C1 block and the final prompt builder (Gate 2), enclosing-method accuracy, retrieval relevance, scoring validity, and LLM behaviour ([06-milestone-and-decisions.md](06-milestone-and-decisions.md), Gates 2–3).
+- At the historical prototype stage: the final C1/prompt builder. Current construction checks are below; human context/label audits, scoring validity and LLM behavior remain open ([06-milestone-and-decisions.md](06-milestone-and-decisions.md), Gates 2–3).
+
+## 7. Pre-pilot corrections and newly reproduced checks (2026-10-20)
+
+**Initial correction pass, observed in the working tree, not a tagged release.** No inference, full pilot, test-pickle load, new test-record inspection, dependency installation or benchmark mutation occurred in that pass. Existing scratch manifests/context artifacts were not overwritten. Source fixes: sorted-term `math.fsum` BM25; logged Tree-sitter ERROR/MISSING/exception fallback; consistent `package-info.java` exclusion; config validation, manifest cap/tokenizer identity, runtime diff cap and rebuilt-token verification. The subsequent artifact rebuild and isolated SDK installation are recorded below.
+
+**Tests executed:**
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE = '1'
+& 'C:\Users\psain\thesis-scratch\.venv\Scripts\python.exe' -B -m pytest tests feasibility -q -p no:cacheprovider
+```
+
+**340 passed in 66.56 seconds**: 203 current tests (including 7 integration functions over 24 distinct real validation commits) and 137 feasibility tests (131 prototype plus 6 chronological-partition tests). The first full run exposed a subprocess-test import-path assumption; child `PYTHONPATH` was made explicit and the complete suite was rerun successfully. No failing result is hidden. Five synthetic subprocesses (`PYTHONHASHSEED` 1/2/3/7/31) compare exact score representations, rankings, selected sources and prompt hashes. The old BM25 code demonstrably changes ranking across these seeds; the corrected code does not.
+
+**Real validation determinism:** rebuilt C0–C3 for all 60 frozen pilot IDs in memory in separate processes with hash seeds **1 and 31**, B = 2,000, config seed 0. Each process read only validation rows of the existing label-free manifest, checked rebuilt C0 token counts against those rows and built from parent Git objects. Both generated identical 240 prompt hashes; **0/60 C2/C3 token-match violations**. C1 statuses: 47 ok, 10 short, 3 empty; C2 and C3: 59 ok, 1 no_hits each. Parser diagnostics: **164 ok, no fallback** in this sample; error/fallback behavior is covered synthetically, not established on a naturally malformed historical file. This does not substitute for human prompt inspection.
+
+The SHA-256 of compact JSON containing sorted `(commit, condition, prompt_sha256)` triples is **`62665b4847a142d450a0324ba67210ab158eab90f19672083d0630a8239b924f`**. Reproduction below uses the CLI after rebuilding metadata-bearing inputs; its normalized digest excludes build time and dirty revision metadata.
+
+**Chronology executed:**
+
+```powershell
+& 'C:\Users\psain\thesis-scratch\.venv\Scripts\python.exe' -B feasibility/split_analysis.py --root C:\Users\psain\thesis-scratch --perms 200 --boot 200
+```
+
+Original / original-window / true chronological-refit AUCs: Kamei **0.792 / 0.771 / 0.752**; history **0.689 / 0.581 / 0.591**; size **0.761 / 0.774 / 0.767**. All fits use training-only standardisation. Chronological train/valid: 16,374/5,465 records, 1,678/179 positive. Original validation age-only within-project AUC **0.836**. Full interpretation: datasets §2 item 10. Resample counts here are 200/200, not a rerun of historical 2,000/1,000 intervals.
+
+**Artifact regeneration completed (2026-10-20).** Legacy manifests lack cap/tokenizer metadata and the CLI rejects them; manual stamping is prohibited. The following CLI operations were executed with additional Python file-access guards. Reproduction requires unused output paths: preserve historical artifacts and any human ratings.
+
+```powershell
+$scratch = 'C:\Users\psain\thesis-scratch'
+$python = "$scratch\.venv\Scripts\python.exe"
+$env:PYTHONPATH = (Join-Path (Get-Location) 'src')
+$env:PYTHONDONTWRITEBYTECODE = '1'
+& $python -B -m jitctx build-manifest --root $scratch --splits train valid --config configs/contexts.toml --out "$scratch\manifest_trainvalid.csv"
+$ids = Get-Content configs/pilot_commits.txt | Where-Object { $_ -and -not $_.StartsWith('#') }
+foreach ($hashSeed in 1,31) {
+    $env:PYTHONHASHSEED = "$hashSeed"
+    & $python -B -m jitctx make-contexts --manifest "$scratch\manifest_trainvalid.csv" --repos "$scratch\repos" --commits $ids --with-prompts --out "$scratch\pilot_contexts_hash$hashSeed.jsonl"
+}
+& $python -B -m jitctx summarize "$scratch\pilot_contexts_hash1.jsonl"
+@'
+import hashlib, json
+from pathlib import Path
+digests = []
+for seed in (1, 31):
+    p = Path(f'C:/Users/psain/thesis-scratch/pilot_contexts_hash{seed}.jsonl')
+    records = [json.loads(line) for line in p.read_text(encoding='utf8').splitlines()]
+    assert len(records) == 240 and len({r['commit'] for r in records}) == 60
+    payload = sorted((r['commit'], r['condition'], r['prompt_sha256']) for r in records)
+    digests.append(hashlib.sha256(json.dumps(payload, separators=(',', ':')).encode()).hexdigest())
+assert digests[0] == digests[1] == '62665b4847a142d450a0324ba67210ab158eab90f19672083d0630a8239b924f', digests
+print('240 prompts identical across hash seeds:', digests[0])
+'@ | & $python -B -
+Remove-Item Env:PYTHONHASHSEED
+```
+
+Keep train+validation duplicate protection by rebuilding both splits together. Do not add the test split or `--allow-test` to these commands. These commands generate inputs only; no model is called. A backend and final statistical analysis implementation remain absent. Copilot feasibility and the prerequisites for any capability call are recorded in Gate 3; human work and Prof. Höll's decisions remain open.
+
+**Persisted results [V]:**
+
+| Artifact/check | Result |
+|---|---|
+| `manifest_trainvalid.csv` | 21,839 rows; train 16,374 (16,371 reconstructed, 15,694 eligible); validation 5,465 (5,464 reconstructed, 5,296 eligible); no test rows |
+| Manifest SHA-256 | `87da666f42247e70be6620de780512a2d1504577a49091872f26a453ff203a21` |
+| Input pickle SHA-256, train / validation | `0b9992d77cd07f45a71bd327a3d408ed3f0ab7a907ffdc10f9916a8f226dc42a` / `e2ee48d5cd9e7f59bea726d4f6a71ef58712ae58d3388d8195a798369cf0d2cf` |
+| Saved builds | `pilot_contexts_hash1.jsonl` and `pilot_contexts_hash31.jsonl`, 240 records each; all fields identical except `build_seconds`; normalized prompt digest is `62665b48…924f` above |
+| Raw JSONL SHA-256, seeds 1 / 31 | `53e37ebfe9c22eab069afa7e03d017f2264db2917aa43616f93b9eb12a45f69e` / `3c27c6b94e78a587d6fd5acf02d646c04084b55a94ff152345865379e5f809c0` |
+| Historical construction | All 60 candidate/parent identities and 240 canonical prompts reconstructed; C1 masking and verbatim parent text, C2/C3 untouched parent files, token/hash accounting and manifest/config identity checked |
+| Budgets | B = 2,000 only; max canonical prompt 14,873 reference tokens; 0/60 C2/C3 match violations; 164 clean parser results, no natural fallback in this sample |
+| Revised 420-call schedule | 1,574,501 canonical input reference tokens: `2*C0 + C1 + 2*C2 + 2*C3`; excludes provider wrapping, hidden reasoning, outputs, retries and capability calls; not a Copilot cost quote |
+| Current checks | **348 passed in 81.10 s** (203 current, 145 feasibility); Ruff passes `src`, `tests` and touched feasibility files; `git diff --check` passes |
+
+All files above are under `C:\Users\psain\thesis-scratch`. Access evidence: `manifest_trainvalid_access.json` permits only the exact train/validation pickles (four opens including input hashing); `pilot_contexts_access_hash1.json` and `pilot_contexts_access_hash31.json` deny **all** benchmark pickles, `jitfine`, `jitext`, label-audit and `labels_*` paths. No new test access occurred. The manifest loader necessarily deserializes train/validation labels, then drops them; context construction does not. The frozen 60 were historically label-stratified, so the **construction**, not the original sampling, is label-separated. This is evidence about pipeline leakage, not proof that the upstream model has never seen these repositories.
+
+`pre_inference_validation.json` records the complete artifact/config/source hashes and checks. Its source-tree digest is `bea7cee5427072257c79f77c3efac5ed8fb99381c2b35b1b2a5086838168025c`; the working tree remains uncommitted. The saved `verify_pre_inference_inputs.py` rechecks the artifacts against Git with evaluation-file access blocked; run it from the repository with the pinned Python, `-B`, to reproduce the checks without inference. `pre_inference_recheck.json` holds its result. These checks also apply the five relevant existing integration assertion functions to **all 60 saved cases**, beyond the ordinary suite's 24-case fixture.
+
+**Human packets prepared, ratings pending [V].** Reused existing scripts; no fresh forward search, issue fetch, resampling of label cases or human ratings:
+
+```powershell
+& $python -B feasibility/label_audit.py --root $scratch --manifest "$scratch\manifest_trainvalid.csv" --prepare-human "$scratch\pre_inference_human_audits\label"
+& $python -B feasibility/gate2_checks.py prepare-relevance --contexts "$scratch\pilot_contexts_hash1.jsonl" --manifest "$scratch\manifest_trainvalid.csv" --out "$scratch\pre_inference_human_audits\relevance"
+```
+
+Both refuse existing output directories. Label packets contain the original 30 cases and a seeded independent 10-case subset, factual existing evidence and complete candidate/already-linked Java patches. Relevance packets contain the fixed 20-of-60 sample, the complete diff and A/B blocks, identical for both raters; the condition/hash key is in `coordinator_only`. Checks reproduced selection/blinding, verified 242 output hashes and 111 candidate/linked patches, and confirmed **40 blank label-rating rows and 80 blank relevance-rating rows**. Evidence: `human_audit_validation.json`, reproducible with `verify_human_packets.py`; per-packet `provenance.json` records source and output hashes. No agreement, κ, relevance effect or label-error rate can be reported yet. Complete and lock blinded relevance ratings **before** revealing side-by-side C0–C3 prompts to the same people, or use a different technical reviewer.
+
+**No-inference SDK preflight [V].** Isolated SDK/runtime installation, protocol handshake and sanitized authentication/model/quota probes are saved under `copilot_preflight`; the project environment and requirements are unchanged. Authentication failed, so account Luna availability, supported reasoning choices and limits remain unverified. Exact versions, hashes, isolation limits and the NO-GO decision are in Gate 3.

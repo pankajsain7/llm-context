@@ -2,6 +2,8 @@ import inspect
 import re
 from pathlib import Path
 
+import pytest
+
 import jitctx
 from conftest import FOO
 from jitctx import gitrepo
@@ -47,6 +49,7 @@ def test_cross_file_context_excludes_every_touched_path_and_is_verbatim(repo):
     for cond in ("C2", "C3"):
         r = recs[cond]
         assert r["sources"] and not {s["path"] for s in r["sources"]} & touched
+        assert all(not s["path"].endswith("package-info.java") for s in r["sources"])
         blobs = gitrepo.read_blobs(repo.path, parent, [s["path"] for s in r["sources"]])
         for s in r["sources"]:
             lines = blobs[s["path"]].split("\n")[s["start"] - 1:s["end"]]
@@ -94,6 +97,44 @@ def test_empty_cross_file_pool(repo):
     repo.commit({"A.java": "package a;\nclass A { int alpha; }\n"})
     sha = repo.commit({"A.java": "package a;\nclass A { int alpha2; }\n"})
     assert records(repo, sha)["C2"]["status"] == "empty_pool"
+
+
+def test_package_info_is_excluded_from_both_diff_and_cross_file_pool(repo):
+    repo.commit({"A.java": "class A { int alpha; }\n", "package-info.java": "package alpha;\n"})
+    sha = repo.commit({"A.java": "class A { int beta; }\n", "package-info.java": "package beta;\n"})
+    assert gitrepo.java_files(repo.path, gitrepo.parent_of(repo.path, sha)) == ["A.java"]
+    recs = records(repo, sha)
+    assert "package-info.java" not in recs["C0"]["prompt"]["user"]
+    assert recs["C2"]["status"] == "empty_pool"
+
+
+def test_build_commit_refuses_over_cap_diff_before_context_lookup(repo, monkeypatch):
+    repo.commit({"A.java": "class A { int alpha; }\n"})
+    sha = repo.commit({"A.java": "class A { int beta; }\n"})
+
+    def no_blobs(*_):
+        pytest.fail("context must not be constructed for an over-cap diff")
+
+    monkeypatch.setattr(gitrepo, "read_blobs", no_blobs)
+    with pytest.raises(ValueError, match="exceeds configured cap"):
+        records(repo, sha, diff_cap=1)
+
+
+def test_c1_records_parser_recovery_and_fallback(repo):
+    bad = FOO.replace("private int count;", "private int count = @;")
+    repo.commit({"Foo.java": bad})
+    sha = repo.commit({"Foo.java": bad.replace("count += y;", "count += 2 * y;")})
+    rec = records(repo, sha)["C1"]
+    assert rec["context_tokens"] > 0
+    assert rec["parser"] == [{"path": "Foo.java", "status": "recovered_error", "error_nodes": 1,
+                               "missing_nodes": 0, "error": None, "fallback": "nearest_unmasked_lines"}]
+
+
+@pytest.mark.parametrize("kwargs", [{"tokenizer": "cl100k_base"}, {"diff_cap": 0}, {"budget": 0},
+                                    {"window_lines": 0}, {"extra_budgets": (2000,)}, {"tolerance": 1}])
+def test_invalid_config_is_rejected(kwargs):
+    with pytest.raises(ValueError):
+        Config(**kwargs)
 
 
 def test_prompt_template_renders_none_for_empty_context():

@@ -16,6 +16,8 @@ like BM25 itself, so it checks the manipulation, not usefulness; the blinded man
 necessary.
 """
 import argparse
+import csv
+import hashlib
 import json
 import random
 import re
@@ -151,6 +153,110 @@ def cmd_relevance(a):
           f"{sum(d < 0 for d in diffs)}; exact sign test p = {sign_test(diffs):.2g}")
 
 
+def relevance_parts(record):
+    """Return the complete rendered context/diff without answer instructions or record metadata."""
+    user = record["prompt"]["user"]
+    context, rest = user.split("### Code change", 1)
+    context = context.split("\n", 1)[1].strip("\n")
+    diff = rest.split("\n", 1)[1].split("\n### Answer", 1)[0].strip("\n")
+    return context, diff
+
+
+def prepare_relevance(contexts, manifest, out, expected_commits=None):
+    """Fixed, label-blind 20-of-60 sample, randomized A/B blocks and two blank independent sheets."""
+    if expected_commits is None:
+        frozen = Path(__file__).resolve().parents[1] / "configs" / "pilot_commits.txt"
+        expected_commits = {line.strip() for line in frozen.read_text(encoding="utf-8").splitlines()
+                            if line.strip() and not line.lstrip().startswith("#")}
+    with manifest.open(encoding="utf-8-sig", newline="") as f:
+        valid = {(r["project"], r["commit"]): r["parent"] for r in csv.DictReader(f) if r["split"] == "valid"}
+    recs = {}
+    with contexts.open(encoding="utf-8") as f:
+        for line in f:
+            r = json.loads(line)
+            if r.get("split") != "valid" or valid.get((r["project"], r["commit"])) != r["parent"]:
+                raise ValueError("Only manifest-verified validation inputs may enter the relevance packet")
+            if set(r) & {"is_buggy_commit", "label", "prediction", "response"}:
+                raise ValueError("Evaluation or model-output fields found in context input")
+            key = (r["project"], r["commit"])
+            if r["condition"] in recs.setdefault(key, {}):
+                raise ValueError("Duplicate condition record")
+            recs[key][r["condition"]] = r
+    if len(recs) != 60 or len(expected_commits) != 60 or {sha for _, sha in recs} != set(expected_commits):
+        raise ValueError("Expected exactly configs/pilot_commits.txt's frozen60; do not substitute another pool")
+    for rs in recs.values():
+        if not {"C0", "C2", "C3"} <= rs.keys():
+            raise ValueError("Missing core rendered blocks")
+        diff = relevance_parts(rs["C0"])[1]
+        for c in ("C2", "C3"):
+            if rs[c]["budget"] != 2000 or relevance_parts(rs[c])[1] != diff:
+                raise ValueError("Audit requires complete B=2000 blocks with the identical C0 diff")
+    if out.exists():
+        raise FileExistsError(f"Refusing to overwrite packet or ratings: {out}")
+    selected = random.Random(2027).sample(sorted(recs, key=lambda x: (x[1], x[0])), 20)
+    order_rng = random.Random(2027)
+    out.mkdir(parents=True)
+    for name in ("rater1", "rater2", "coordinator_only"):
+        (out / name).mkdir()
+    instructions = ("# Independent context-evidence review\n\n"
+        "For each case read the Java change and both complete additional-code blocks. The source "
+        "snapshot is before the change. Work independently; do not inspect the coordinator key, another "
+        "rater's sheet, benchmark labels or model predictions. Do not look up external labels or model "
+        "answers. Use only this packet. No ratings have been supplied.\n\n"
+        "Rate each non-empty block: 0 = unrelated; 1 = lexical/topical connection only; 2 = contains "
+        "a checkable dependency, contract, caller/callee or test relevant to judging this change. "
+        "Cite exact paths/lines and explain the connection. A matching name alone does not justify 2. "
+        "Empty blocks are flagged separately; leave their rating blank and explain. Record your rater_id "
+        "and role (human/AI); at least one of the two raters must be human. Retain submitted sheets "
+        "unchanged, then adjudicate disagreements separately. Submit and lock these ratings BEFORE any "
+        "side-by-side prompt review that identifies the code-selection strategies.\n")
+    rows, key_rows = [], []
+    for i, identity in enumerate(selected):
+        rs, case_id = recs[identity], f"R{i + 1:02d}"
+        order = ["C2", "C3"]
+        order_rng.shuffle(order)
+        text = f"# {case_id}\n\n## Java change\n```diff\n{relevance_parts(rs['C0'])[1]}\n```\n"
+        for block_id, cond in zip(("A", "B"), order):
+            block = relevance_parts(rs[cond])[0]
+            text += f"\n## Block {block_id}\n```java\n{block}\n```\n"
+            rows.append({"case_id": case_id, "block": block_id, "empty": str(block.strip() in ("", "(none)")).lower(),
+                         "rater_id": "", "rater_role": "", "rating": "", "supporting_paths_lines": "",
+                         "rationale": "", "uncertainty": "", "completed_utc": ""})
+            key_rows.append({"case_id": case_id, "block": block_id, "project": identity[0], "commit": identity[1],
+                             "parent": rs[cond]["parent"], "condition": cond,
+                             "context_sha256": rs[cond]["context_sha256"],
+                             "prompt_sha256": rs[cond]["prompt_sha256"]})
+        for name in ("rater1", "rater2"):
+            (out / name / f"{case_id}.md").write_bytes(text.encode("utf-8"))
+    for name in ("rater1", "rater2"):
+        (out / name / "README.md").write_bytes(instructions.encode("utf-8"))
+        with (out / name / "ratings.csv").open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0]), lineterminator="\n")
+            w.writeheader()
+            w.writerows(rows)
+    private = out / "coordinator_only"
+    with (private / "key.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(key_rows[0]), lineterminator="\n")
+        w.writeheader()
+        w.writerows(key_rows)
+    provenance = {
+        "selection": "60 sorted commit SHA then project; Random(2027).sample(...,20)",
+        "blinding": "separate Random(2027) shuffles C2/C3 as A/B in sample order; both raters get same blocks",
+        "contexts_sha256": hashlib.sha256(contexts.read_bytes()).hexdigest(),
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "frozen_ids_sha256": hashlib.sha256(("\n".join(sorted(expected_commits)) + "\n").encode()).hexdigest(),
+        "generator_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "files_sha256": {p.relative_to(out).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                         for p in sorted(out.rglob("*")) if p.is_file()},
+    }
+    (private / "provenance.json").write_bytes((json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+    print(f"Prepared 20 blinded cases, 40 blank block ratings per rater: {out}")
+
+
+def cmd_prepare_relevance(a):
+    prepare_relevance(a.contexts, a.manifest, a.out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(required=True)
@@ -164,6 +270,11 @@ def main():
     p.add_argument("--contexts", type=Path, required=True)
     p.add_argument("--suffix", default="", help="budget suffix, for example @8000")
     p.set_defaults(func=cmd_relevance)
+    p = sub.add_parser("prepare-relevance", help="fixed20-of60 independent A/B human audit; no inference or labels")
+    p.add_argument("--contexts", type=Path, required=True)
+    p.add_argument("--manifest", type=Path, required=True)
+    p.add_argument("--out", type=Path, required=True, help="new directory; refuses to overwrite")
+    p.set_defaults(func=cmd_prepare_relevance)
     a = ap.parse_args()
     if getattr(a, "manifest", 1) is None:
         a.manifest = a.root / "manifest.csv"

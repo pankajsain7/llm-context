@@ -1,4 +1,6 @@
 """Java source helpers: Git-compatible line splitting, license-header stripping, enclosing declarations."""
+from dataclasses import dataclass, field
+
 import tree_sitter_java
 from tree_sitter import Language, Node, Parser
 
@@ -8,6 +10,15 @@ TYPE_DECL = {"class_declaration", "interface_declaration", "enum_declaration", "
              "annotation_type_declaration"}
 BODY = {"class_body", "interface_body", "enum_body", "annotation_type_body", "enum_body_declarations"}
 MEMBER_FIELDS = {"field_declaration", "constant_declaration", "enum_constant"}
+
+
+@dataclass(frozen=True)
+class EnclosingResult:
+    lines: set[int] = field(default_factory=set)
+    status: str = "ok"  # ok | recovered_error | parse_exception
+    error_nodes: int = 0
+    missing_nodes: int = 0
+    error: str | None = None
 
 
 def split_lines(text: str) -> list[str]:
@@ -75,10 +86,26 @@ def _type_outline(decl: Node) -> set[int]:
     return lines
 
 
-def enclosing_lines(source: str, anchors: set[int]) -> set[int]:
+def enclosing_context(source: str, anchors: set[int]) -> EnclosingResult:
     """Lines of the innermost method, constructor, or initializer containing each anchor line; for anchors
-    outside any of these, the enclosing type's header and field declarations (design §5.2)."""
-    tree = _PARSER.parse(source.encode("utf-8"))
+    outside any of these, the enclosing type's header and field declarations (design §5.2).
+
+    Recovered syntax errors are not accepted as reliable declaration boundaries. An empty preferred
+    set makes C1 fall back to the existing nearest-unmasked-line ranking without losing source text.
+    """
+    try:
+        tree = _PARSER.parse(source.encode("utf-8"))
+    except (RuntimeError, ValueError, TypeError, UnicodeError) as exc:
+        return EnclosingResult(status="parse_exception", error=f"{type(exc).__name__}: {exc}"[:200])
+    if tree.root_node.has_error:
+        stack = [tree.root_node]
+        errors = missing = 0
+        while stack:
+            node = stack.pop()
+            errors += node.type == "ERROR"
+            missing += node.is_missing
+            stack.extend(_children(node))
+        return EnclosingResult(status="recovered_error", error_nodes=errors, missing_nodes=missing)
     # tree-sitter rows count LF only, consistent with split_lines
     out: set[int] = set()
     for line in sorted(anchors):
@@ -86,4 +113,9 @@ def enclosing_lines(source: str, anchors: set[int]) -> set[int]:
             out.update(_rows(node))
         elif (decl := _innermost(tree.root_node, line, lambda n, _: n.type in TYPE_DECL)) is not None:
             out.update(_type_outline(decl))
-    return out
+    return EnclosingResult(lines=out)
+
+
+def enclosing_lines(source: str, anchors: set[int]) -> set[int]:
+    """Compatibility helper; callers needing parser diagnostics should use enclosing_context."""
+    return enclosing_context(source, anchors).lines
